@@ -1,0 +1,16 @@
+[Unit]
+Description=WebStudy study tracker backend
+Documentation=file://%h/Projects/WebStudy/README.md
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/WebStudy
+Environment=WEBSTUDY_HOST=127.0.0.1
+Environment=WEBSTUDY_PORT=8000
+ExecStart=%h/Projects/WebStudy/.venv/bin/webstudy
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

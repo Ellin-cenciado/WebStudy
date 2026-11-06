@@ -1,0 +1,4 @@
+# Desktop app build output
+node_modules/
+.build/
+release/

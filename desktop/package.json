@@ -1,0 +1,71 @@
+{
+  "name": "webstudy-desktop",
+  "productName": "WebStudy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone desktop shell for the WebStudy study tracker",
+  "license": "MIT",
+  "desktopName": "webstudy.desktop",
+  "author": {
+    "name": "WebStudy"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "main": "main.cjs",
+  "scripts": {
+    "start": "npm run build:frontend && electron .",
+    "dev": "electron .",
+    "build:frontend": "npm --prefix ../frontend run build",
+    "build:backend": "bash scripts/build-backend.sh",
+    "build": "npm run build:frontend && npm run build:backend",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "dist:linux": "npm run build && electron-builder --linux AppImage"
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.webstudy.WebStudy",
+    "productName": "WebStudy",
+    "executableName": "webstudy",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.cjs",
+      "package.json",
+      "assets/**"
+    ],
+    "extraResources": [
+      {
+        "from": ".build/backend/webstudy",
+        "to": "backend"
+      },
+      {
+        "from": "../frontend/dist",
+        "to": "frontend"
+      }
+    ],
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "syncDesktopName": true,
+      "category": "Education",
+      "icon": "assets/icon.png",
+      "synopsis": "Carry-over study tracker with pomodoro timing and a checklist",
+      "description": "WebStudy is a local-first study tracker that carries unmet hours into the next day, runs pomodoro study and break phases, and tracks a per-item checklist.",
+      "maintainer": "WebStudy"
+    }
+  }
+}

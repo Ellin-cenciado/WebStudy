@@ -193,6 +193,75 @@ class StudyService:
         self._checklist_changed()
         return item.id
 
+    def import_plan(self, subjects: list[dict]) -> dict:
+        """Validate and atomically add several subjects and their items.
+
+        The whole batch is checked before anything is mutated, so a bad item
+        can never leave a half-imported plan in the checklist. The revision is
+        bumped once and the caller is responsible for broadcasting the result.
+        """
+        if not isinstance(subjects, list) or not subjects:
+            raise ValueError("a plan must contain at least one subject")
+        if len(subjects) > 20:
+            raise ValueError("a plan can contain at most 20 subjects")
+
+        cleaned: list[tuple[str, list[tuple[str, int]]]] = []
+        for raw_subject in subjects:
+            if not isinstance(raw_subject, dict):
+                raise ValueError("each subject must be an object")
+            name = str(raw_subject.get("name") or "").strip()
+            if not name:
+                raise ValueError("subject names must not be empty")
+            if len(name) > 200:
+                raise ValueError("subject names are limited to 200 characters")
+            raw_items = raw_subject.get("items")
+            if not isinstance(raw_items, list) or not raw_items:
+                raise ValueError(f"subject {name!r} has no items")
+            if len(raw_items) > 100:
+                raise ValueError(
+                    f"subject {name!r} has more than 100 items"
+                )
+            items: list[tuple[str, int]] = []
+            for raw_item in raw_items:
+                if not isinstance(raw_item, dict):
+                    raise ValueError("each item must be an object")
+                text = str(raw_item.get("text") or "").strip()
+                if not text:
+                    raise ValueError("item text must not be empty")
+                if len(text) > 500:
+                    raise ValueError("item text is limited to 500 characters")
+                try:
+                    seconds = int(raw_item.get("duration_seconds") or 0)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("item duration must be a whole number") from exc
+                if not 60 <= seconds <= 24 * 60 * 60:
+                    raise ValueError(
+                        "item durations must be between 1 minute and 24 hours"
+                    )
+                items.append((text, seconds))
+            cleaned.append((name, items))
+
+        created: list[dict] = []
+        for name, items in cleaned:
+            subject = self.checklist.add_subject(name)
+            item_ids = [
+                self.checklist.add_item(subject.id, text, seconds).id
+                for text, seconds in items
+            ]
+            created.append(
+                {"id": subject.id, "name": subject.name, "item_ids": item_ids}
+            )
+        self.checklist.ensure_active()
+        self._checklist_changed()
+        return {
+            "revision": self._checklist_revision,
+            "subjects": created,
+            "total_items": sum(len(entry["item_ids"]) for entry in created),
+            "total_seconds": sum(
+                seconds for _name, items in cleaned for _text, seconds in items
+            ),
+        }
+
     def rename_item(self, item_id: str, text: str) -> None:
         self.checklist.rename_item(item_id, text)
         self._checklist_changed()

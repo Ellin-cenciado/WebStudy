@@ -124,3 +124,179 @@ export const WEEKDAYS: WeekdayName[] = [
 ];
 
 export const DAY_MODES: DayMode[] = ["carried", "optional", "free"];
+
+export type StudyPrepLanguage = "auto" | "es" | "en";
+export type StudyPrepDepth = "quick" | "balanced" | "deep";
+export type StudyPrepStatus =
+  | "queued"
+  | "running"
+  | "ready"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+export type StudyPrepStage =
+  | "queued"
+  | "extracting"
+  | "mapping"
+  | "drafting"
+  | "planning"
+  | "ready"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+export type StudySourceKind = "pdf" | "pptx" | "md" | "notes";
+
+export interface StudyPrepConfig {
+  configured: boolean;
+  provider: string;
+  base_url: string;
+  model: string;
+  context_tokens: number;
+  max_output_tokens: number;
+  max_files: number;
+  max_file_bytes: number;
+  max_total_bytes: number;
+  message: string;
+}
+
+export interface StudyPrepOptions {
+  language: StudyPrepLanguage;
+  depth: StudyPrepDepth;
+  target_minutes: number | null;
+}
+
+export interface StudyPrepSource {
+  id: string;
+  filename: string;
+  kind: StudySourceKind;
+  title: string;
+  unit_label: string;
+  unit_count: number;
+  char_count: number;
+  chapter_count: number;
+  size_bytes: number;
+  status: "pending" | "ready" | "error";
+  error: string | null;
+  warnings: string[];
+}
+
+export interface StudyPrepRunError {
+  code: string;
+  message: string;
+  hint: string | null;
+}
+
+export interface StudyPrepRun {
+  id: string;
+  title: string;
+  status: StudyPrepStatus;
+  stage: StudyPrepStage;
+  progress: number;
+  stage_detail: string;
+  created_at: string;
+  updated_at: string;
+  options: StudyPrepOptions;
+  sources: StudyPrepSource[];
+  warnings: string[];
+  error: StudyPrepRunError | null;
+  has_result: boolean;
+  imported_at: string | null;
+  total_duration_seconds: number | null;
+  item_count: number | null;
+  subject_count: number | null;
+}
+
+export interface StudySourceRef {
+  source_id: string;
+  source_name: string;
+  unit_label: string;
+  unit_start: number;
+  unit_end: number;
+  display: string;
+}
+
+export interface StudyKeyTerm {
+  term: string;
+  definition: string;
+}
+
+export interface StudyNoteSection {
+  id: string;
+  chapter_id: string;
+  chapter_title: string;
+  title: string;
+  exam_scope: boolean;
+  grounded: boolean;
+  markdown: string;
+  refs: StudySourceRef[];
+  word_count: number;
+}
+
+export interface StudyPrepNotes {
+  title: string;
+  language: "es" | "en";
+  summary: string;
+  exam_scope: string[];
+  key_terms: StudyKeyTerm[];
+  sections: StudyNoteSection[];
+  sources: StudyPrepSource[];
+  markdown: string;
+  word_count: number;
+}
+
+export interface StudyPlanItem {
+  temp_id: string;
+  text: string;
+  duration_seconds: number;
+  kind: "study" | "review";
+  exam_scope: boolean;
+  refs: StudySourceRef[];
+}
+
+export interface StudyPlanSubject {
+  temp_id: string;
+  name: string;
+  source_id: string;
+  chapter_id: string;
+  chapter_title: string;
+  items: StudyPlanItem[];
+}
+
+export interface StudyPlan {
+  version: number;
+  title: string;
+  subjects: StudyPlanSubject[];
+  totals: {
+    duration_seconds: number;
+    items: number;
+    subjects: number;
+  };
+  target_minutes: number | null;
+  warnings: string[];
+}
+
+export interface StudyPrepResult {
+  notes: StudyPrepNotes;
+  plan: StudyPlan;
+}
+
+export interface ChecklistImportItem {
+  text: string;
+  duration_seconds: number;
+}
+
+export interface ChecklistImportSubject {
+  name: string;
+  items: ChecklistImportItem[];
+}
+
+export interface ChecklistImportResult {
+  revision: number;
+  subjects: {
+    id: string;
+    name: string;
+    item_ids: string[];
+  }[];
+  total_items: number;
+  total_seconds: number;
+}

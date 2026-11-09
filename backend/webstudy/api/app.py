@@ -7,7 +7,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -15,10 +15,14 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
 from ..core.clock import Clock, SystemClock
-from ..events import Event
 from ..service import StudyService
 from ..storage import config as config_mod
 from ..storage import paths
+from ..study_prep.errors import StudyPrepError
+from ..study_prep.manager import StudyPrepManager
+from ..study_prep.models import ChecklistImportRequest, ChecklistImportResult
+from ..study_prep.providers import LLMProvider, provider_from_env
+from .commands import publish_state, run_command
 from .lock import InstanceLock, InstanceLockError
 from .schemas import (
     ConfigResponse,
@@ -38,6 +42,7 @@ from .serializers import (
     stats_response,
 )
 from .stream import Broadcaster, event_stream
+from .study_prep import router as study_prep_router
 
 log = logging.getLogger("webstudy.api")
 
@@ -78,34 +83,6 @@ async def _tick_loop(app: FastAPI) -> None:
             log.exception("tick failed")
 
 
-async def _run_command(
-    app: FastAPI, action: Callable[[StudyService], Any]
-) -> Any:
-    """Run a mutating service call, then broadcast the resulting state."""
-    service = app.state.service
-    async with app.state.lock:
-        revision_before = service.checklist_revision()
-        outcome = action(service)
-        events: list[Event] = []
-        value = outcome
-        if isinstance(outcome, list):
-            events = outcome
-            value = None
-        state = state_response(service).model_dump(mode="json")
-        checklist = None
-        if service.checklist_revision() != revision_before:
-            checklist = service.checklist_data()
-
-    await app.state.broadcaster.publish("state", state)
-    if checklist is not None:
-        await app.state.broadcaster.publish("checklist", checklist)
-    for event in events:
-        await app.state.broadcaster.publish(
-            "event", event_response(event).model_dump(mode="json")
-        )
-    return value
-
-
 def create_app(
     *,
     config_path: Path | None = None,
@@ -120,6 +97,8 @@ def create_app(
     enable_lock: bool = True,
     lock_file: Path | None = None,
     frontend_dist: Path | None = None,
+    study_prep_dir: Path | None = None,
+    study_prep_provider_factory: Callable[[], LLMProvider | None] | None = None,
 ) -> FastAPI:
     config_target = Path(config_path).expanduser() if config_path else paths.config_path()
     state_target = Path(state_file).expanduser() if state_file else paths.state_path()
@@ -138,6 +117,12 @@ def create_app(
         if lock_file
         else state_target.parent / paths.lock_path().name
     )
+    study_prep_target = (
+        Path(study_prep_dir).expanduser()
+        if study_prep_dir
+        else state_target.parent / "study-prep"
+    )
+    provider_factory = study_prep_provider_factory or provider_from_env
     dist = Path(frontend_dist).expanduser() if frontend_dist else _default_frontend_dist()
 
     @asynccontextmanager
@@ -165,6 +150,7 @@ def create_app(
             app.state.broadcaster = Broadcaster()
             if owns_service and app.state.service.config.auto_start:
                 app.state.service.start()
+            await app.state.study_prep.start()
             if enable_tick_loop:
                 tick_task = asyncio.create_task(_tick_loop(app))
             yield
@@ -175,6 +161,7 @@ def create_app(
                     await tick_task
                 except asyncio.CancelledError:
                     pass
+            await app.state.study_prep.shutdown()
             if owns_service and app.state.service is not None:
                 app.state.service.pause()
                 app.state.service.close()
@@ -196,10 +183,26 @@ def create_app(
     app.state.lock = asyncio.Lock()
     app.state.broadcaster = Broadcaster()
     app.state.frontend_dist = dist
+    app.state.study_prep = StudyPrepManager(
+        study_prep_target, provider_factory=provider_factory
+    )
 
     @app.exception_handler(ValueError)
     async def _value_error_handler(_request: Request, exc: ValueError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @app.exception_handler(StudyPrepError)
+    async def _study_prep_error_handler(
+        _request: Request, exc: StudyPrepError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "detail": exc.message,
+                "code": exc.code,
+                "hint": exc.hint,
+            },
+        )
 
     @app.exception_handler(InstanceLockError)
     async def _lock_error_handler(
@@ -220,6 +223,25 @@ def create_app(
     async def get_checklist(request: Request):
         async with request.app.state.lock:
             return request.app.state.service.checklist_data()
+
+    @app.post("/api/checklist/import", response_model=ChecklistImportResult)
+    async def import_checklist(request: Request, body: ChecklistImportRequest):
+        payload = [
+            {
+                "name": subject.name,
+                "items": [
+                    {
+                        "text": item.text,
+                        "duration_seconds": item.duration_seconds,
+                    }
+                    for item in subject.items
+                ],
+            }
+            for subject in body.subjects
+        ]
+        return await run_command(
+            request.app, lambda service: service.import_plan(payload)
+        )
 
     @app.get("/api/config", response_model=ConfigResponse)
     async def get_config(request: Request):
@@ -243,22 +265,22 @@ def create_app(
 
     @app.post("/api/session/start", status_code=204)
     async def start_session(request: Request):
-        await _run_command(request.app, lambda service: service.start())
+        await run_command(request.app, lambda service: service.start())
         return Response(status_code=204)
 
     @app.post("/api/session/pause", status_code=204)
     async def pause_session(request: Request):
-        await _run_command(request.app, lambda service: service.pause())
+        await run_command(request.app, lambda service: service.pause())
         return Response(status_code=204)
 
     @app.post("/api/session/skip-phase", status_code=204)
     async def skip_phase(request: Request):
-        await _run_command(request.app, lambda service: service.skip_phase())
+        await run_command(request.app, lambda service: service.skip_phase())
         return Response(status_code=204)
 
     @app.post("/api/subjects", response_model=SubjectResponse, status_code=201)
     async def add_subject(request: Request, body: SubjectRequest):
-        subject_id = await _run_command(
+        subject_id = await run_command(
             request.app, lambda service: service.add_subject(body.name)
         )
         return SubjectResponse(id=subject_id)
@@ -267,33 +289,33 @@ def create_app(
     async def rename_subject(request: Request, subject_id: str, body: NameRequest):
         async with request.app.state.lock:
             request.app.state.service.rename_subject(subject_id, body.name)
-        await _publish_state(request.app)
+        await publish_state(request.app)
         return Response(status_code=204)
 
     @app.delete("/api/subjects/{subject_id}", status_code=204)
     async def remove_subject(request: Request, subject_id: str):
-        await _run_command(
+        await run_command(
             request.app, lambda service: service.remove_subject(subject_id)
         )
         return Response(status_code=204)
 
     @app.post("/api/subjects/{subject_id}/select", status_code=204)
     async def select_subject(request: Request, subject_id: str):
-        await _run_command(
+        await run_command(
             request.app, lambda service: service.select_subject(subject_id)
         )
         return Response(status_code=204)
 
     @app.post("/api/subjects/{subject_id}/reset", status_code=204)
     async def reset_subject(request: Request, subject_id: str):
-        await _run_command(
+        await run_command(
             request.app, lambda service: service.reset_subject(subject_id)
         )
         return Response(status_code=204)
 
     @app.post("/api/subjects/{subject_id}/uncheck-last", status_code=204)
     async def uncheck_last(request: Request, subject_id: str):
-        await _run_command(
+        await run_command(
             request.app, lambda service: service.uncheck_last_item(subject_id)
         )
         return Response(status_code=204)
@@ -304,7 +326,7 @@ def create_app(
         status_code=201,
     )
     async def add_item(request: Request, subject_id: str, body: ItemCreateRequest):
-        item_id = await _run_command(
+        item_id = await run_command(
             request.app,
             lambda service: service.add_item(
                 subject_id, body.text, body.duration_seconds
@@ -323,19 +345,19 @@ def create_app(
                 request.app.state.service.set_item_duration(
                     item_id, body.duration_seconds
                 )
-        await _publish_state(request.app)
+        await publish_state(request.app)
         return Response(status_code=204)
 
     @app.delete("/api/items/{item_id}", status_code=204)
     async def remove_item(request: Request, item_id: str):
-        await _run_command(
+        await run_command(
             request.app, lambda service: service.remove_item(item_id)
         )
         return Response(status_code=204)
 
     @app.post("/api/items/{item_id}/check", status_code=204)
     async def check_item(request: Request, item_id: str):
-        await _run_command(
+        await run_command(
             request.app, lambda service: service.check_item(item_id)
         )
         return Response(status_code=204)
@@ -357,6 +379,8 @@ def create_app(
             },
         )
 
+    app.include_router(study_prep_router)
+
     if dist is not None and dist.is_dir():
         assets = dist / "assets"
         if assets.is_dir():
@@ -372,11 +396,3 @@ def create_app(
             return FileResponse(dist / "index.html")
 
     return app
-
-
-async def _publish_state(app: FastAPI) -> None:
-    async with app.state.lock:
-        state = state_response(app.state.service).model_dump(mode="json")
-        checklist = app.state.service.checklist_data()
-    await app.state.broadcaster.publish("state", state)
-    await app.state.broadcaster.publish("checklist", checklist)

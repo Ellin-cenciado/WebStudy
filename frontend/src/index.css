@@ -58,3 +58,199 @@ textarea {
 .font-mono {
   font-variant-numeric: tabular-nums;
 }
+
+/* Rendered study notes. Kept here instead of pulling in a typography plugin. */
+.study-markdown {
+  color: var(--color-slate-700);
+  font-size: 0.925rem;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.dark .study-markdown {
+  color: var(--color-slate-300);
+}
+
+.study-markdown > :first-child {
+  margin-top: 0;
+}
+
+.study-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.study-markdown h1,
+.study-markdown h2,
+.study-markdown h3,
+.study-markdown h4 {
+  color: var(--color-slate-900);
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 1.7em 0 0.6em;
+}
+
+.dark .study-markdown h1,
+.dark .study-markdown h2,
+.dark .study-markdown h3,
+.dark .study-markdown h4 {
+  color: var(--color-slate-50);
+}
+
+.study-markdown h1 {
+  font-size: 1.65rem;
+}
+
+.study-markdown h2 {
+  border-bottom: 1px solid var(--color-slate-200);
+  font-size: 1.25rem;
+  padding-bottom: 0.3em;
+}
+
+.dark .study-markdown h2 {
+  border-color: var(--color-slate-800);
+}
+
+.study-markdown h3 {
+  font-size: 1.05rem;
+}
+
+.study-markdown p,
+.study-markdown ul,
+.study-markdown ol,
+.study-markdown table,
+.study-markdown pre,
+.study-markdown blockquote {
+  margin: 0.85em 0;
+}
+
+.study-markdown ul,
+.study-markdown ol {
+  padding-left: 1.35rem;
+}
+
+.study-markdown ul {
+  list-style: disc;
+}
+
+.study-markdown ol {
+  list-style: decimal;
+}
+
+.study-markdown li {
+  margin: 0.25em 0;
+}
+
+.study-markdown li > ul,
+.study-markdown li > ol {
+  margin: 0.25em 0;
+}
+
+.study-markdown strong {
+  color: var(--color-slate-900);
+  font-weight: 650;
+}
+
+.dark .study-markdown strong {
+  color: var(--color-slate-100);
+}
+
+.study-markdown a {
+  color: var(--color-indigo-600);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dark .study-markdown a {
+  color: var(--color-indigo-300);
+}
+
+.study-markdown blockquote {
+  background: var(--color-indigo-50);
+  border-left: 3px solid var(--color-indigo-400);
+  border-radius: 0 0.75rem 0.75rem 0;
+  padding: 0.7rem 1rem;
+}
+
+.dark .study-markdown blockquote {
+  background: color-mix(in oklab, var(--color-indigo-950) 55%, transparent);
+  border-left-color: var(--color-indigo-500);
+}
+
+.study-markdown blockquote > :first-child {
+  margin-top: 0;
+}
+
+.study-markdown blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.study-markdown code {
+  background: var(--color-slate-100);
+  border-radius: 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  padding: 0.15em 0.35em;
+}
+
+.dark .study-markdown code {
+  background: var(--color-slate-800);
+}
+
+.study-markdown pre {
+  background: var(--color-slate-900);
+  border-radius: 0.75rem;
+  color: var(--color-slate-100);
+  overflow-x: auto;
+  padding: 0.9rem 1rem;
+}
+
+.study-markdown pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.study-markdown table {
+  border-collapse: collapse;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  width: max-content;
+}
+
+.study-markdown th,
+.study-markdown td {
+  border: 1px solid var(--color-slate-200);
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.dark .study-markdown th,
+.dark .study-markdown td {
+  border-color: var(--color-slate-700);
+}
+
+.study-markdown th {
+  background: var(--color-slate-100);
+  color: var(--color-slate-900);
+  font-weight: 650;
+}
+
+.dark .study-markdown th {
+  background: var(--color-slate-800);
+  color: var(--color-slate-100);
+}
+
+.study-markdown hr {
+  border: 0;
+  border-top: 1px solid var(--color-slate-200);
+  margin: 1.5rem 0;
+}
+
+.dark .study-markdown hr {
+  border-color: var(--color-slate-800);
+}
+
+.study-markdown input[type="checkbox"] {
+  margin-right: 0.4rem;
+}

@@ -5,17 +5,31 @@ import {
   ListChecks,
   Moon,
   Settings,
+  Sparkles,
   Sun,
   Timer,
   WifiOff,
+  type LucideIcon,
 } from "lucide-react";
 import { cn } from "../lib/cn";
 import { useLive } from "../context/LiveContext";
 import { useTheme } from "../context/ThemeContext";
 
-const NAV_ITEMS = [
+const NAV_ITEMS: Array<{
+  to: string;
+  label: string;
+  shortLabel?: string;
+  icon: LucideIcon;
+  end?: boolean;
+}> = [
   { to: "/", label: "Timer", icon: Timer, end: true },
   { to: "/checklist", label: "Checklist", icon: ListChecks },
+  {
+    to: "/study-prep",
+    label: "Study Prep",
+    shortLabel: "Prep",
+    icon: Sparkles,
+  },
   { to: "/stats", label: "Stats", icon: BarChart3 },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
@@ -125,7 +139,7 @@ function MobileHeader() {
 function MobileNav() {
   return (
     <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 lg:hidden">
-      <div className="mx-auto grid max-w-md grid-cols-4">
+      <div className="mx-auto grid max-w-md grid-cols-5">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
           return (
@@ -143,7 +157,7 @@ function MobileNav() {
               }
             >
               <Icon className="size-5" />
-              {item.label}
+              {item.shortLabel ?? item.label}
             </NavLink>
           );
         })}

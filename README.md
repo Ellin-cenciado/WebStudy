@@ -14,6 +14,8 @@ checklist, and history rules; React only renders state and sends commands.
 - Runs pomodoro study/break phases; breaks count toward the daily goal.
 - Tracks checklist subjects and items with per-item timers, surplus carry, debt,
   and a five-minute rest after a subject is completed.
+- Generates polished study notes and a deterministic checklist plan from rough
+  notes plus PDF, PPTX, and Markdown sources (preview; requires an LLM).
 - Shows live state over Server-Sent Events, history/compliance stats, debt, and
   optional weekend goals.
 - Keeps the original SimpleStudy XDG data paths, so existing config, state,
@@ -31,6 +33,7 @@ WebStudy/
 │   ├── webstudy/
 │   │   ├── core/          # Pure domain logic (copied from SimpleStudy)
 │   │   ├── storage/       # Atomic JSON, SQLite history, XDG paths
+│   │   ├── study_prep/    # Source extraction, LLM pipeline, run store
 │   │   ├── service.py     # Timer/checklist authority
 │   │   ├── events.py      # Transport-neutral events
 │   │   └── api/           # FastAPI, SSE, schemas, lock
@@ -113,6 +116,78 @@ When these are unset, WebStudy uses the same paths as SimpleStudy:
 would write the same files. WebStudy takes an advisory lock
 (`webstudy.lock`) and will refuse to start if another WebStudy backend owns it,
 but the old daemon does not use that lock.
+
+## Study Prep (preview)
+
+The **Study Prep** page turns rough class notes and text-based sources into
+polished Markdown notes and an editable checklist plan. The browser uploads
+files to the local backend, a background worker generates the notes, and you
+review and edit the plan before importing it into the checklist.
+
+### Configure a model
+
+The preview is configured with environment variables only. No model settings
+are written to `config.toml`.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `WEBSTUDY_LLM_MODEL` | *(required)* | Model name, e.g. `llama3.1` or `gpt-4.1-mini` |
+| `WEBSTUDY_LLM_BASE_URL` | `http://127.0.0.1:11434/v1` | OpenAI-compatible endpoint |
+| `WEBSTUDY_LLM_API_KEY` | empty | Bearer token for a remote provider |
+| `WEBSTUDY_LLM_PROVIDER` | inferred | `ollama` or `openai-compatible` (display only) |
+| `WEBSTUDY_LLM_CONTEXT_TOKENS` | `16384` | Prompt budget for the adapter |
+| `WEBSTUDY_LLM_MAX_OUTPUT_TOKENS` | `2500` | Maximum generation per request |
+| `WEBSTUDY_LLM_TIMEOUT_SECONDS` | `300` | Per-request timeout |
+
+Local Ollama example:
+
+```bash
+export WEBSTUDY_LLM_MODEL=llama3.1
+export WEBSTUDY_LLM_BASE_URL=http://127.0.0.1:11434/v1
+.venv/bin/webstudy
+```
+
+Remote OpenAI-compatible example:
+
+```bash
+export WEBSTUDY_LLM_MODEL=gpt-4.1-mini
+export WEBSTUDY_LLM_BASE_URL=https://api.openai.com/v1
+export WEBSTUDY_LLM_API_KEY=sk-...
+export WEBSTUDY_LLM_PROVIDER=openai-compatible
+.venv/bin/webstudy
+```
+
+Without `WEBSTUDY_LLM_MODEL`, the page shows a configuration warning and run
+creation fails with `provider_not_configured`; retry works after the backend is
+restarted with a model configured.
+
+### Inputs and limits
+
+- Supported sources are text-based **PDF**, **PPTX**, and **Markdown**.
+- DOCX, images, and scanned PDFs are rejected; OCR is not implemented.
+- Up to 10 files, 50 MB per file, 200 MB total per run.
+- Rough notes can be supplied alone; at least one source or non-empty rough
+  notes is required.
+- Output language is auto-detected, Spanish, or English. Depth is quick,
+  balanced, or deep. A target number of minutes is optional.
+- Study times are deterministic: source words, page/slide/section counts, note
+  length, depth, exam scope, and the model's difficulty rating set the
+  durations. The model never invents the total study time.
+- Each detected chapter becomes one checklist subject. Import is additive,
+  validates the whole plan first, bumps the checklist revision once, and
+  broadcasts once. A run can be imported only once.
+
+### Storage and privacy
+
+Each run lives under `state_dir()/study-prep/<run_id>/` and keeps the raw
+uploads, extracted text, rough notes, result JSON, and `run.json` progress. The
+default location is `~/.local/state/simplestudy/study-prep/`.
+
+The backend sends only the extracted excerpts needed for a prompt to the
+configured model. A remote provider therefore receives that excerpt text; no
+files are uploaded to a third party by WebStudy itself. Runs are processed one
+at a time so a local Ollama instance is not overloaded. Deleting a run removes
+its whole directory.
 
 ## Desktop app (Electron)
 
@@ -252,11 +327,17 @@ Then open <http://127.0.0.1:8000>.
 - `GET /api/health`
 - `GET /api/state` — snapshot plus checklist summary
 - `GET /api/checklist` — full checklist and revision
+- `POST /api/checklist/import` — atomic bulk subject/item import
 - `GET /api/config`, `PUT /api/config`
 - `GET /api/stats?days=30`
 - `POST /api/session/start`, `/pause`, `/skip-phase`
 - Subject/item CRUD plus `/select`, `/reset`, `/uncheck-last`
 - `POST /api/items/{id}/check`
+- `GET /api/study-prep/config`
+- `POST /api/study-prep/runs` — multipart rough notes plus PDF/PPTX/Markdown
+- `GET /api/study-prep/runs`, `/runs/{id}`, `/runs/{id}/result`
+- `POST /api/study-prep/runs/{id}/cancel`, `/retry`, `/import`
+- `DELETE /api/study-prep/runs/{id}`
 - `GET /api/stream` — SSE (`state`, `checklist`, `event`)
 - OpenAPI docs: `/api/docs`
 
@@ -264,6 +345,10 @@ Then open <http://127.0.0.1:8000>.
 
 - Notifications are in-app toasts; desktop notifications are opt-in in
   Settings. Android has no background notification service.
+- Study Prep is a browser/desktop preview. The Android app does not expose it,
+  and it requires a reachable Ollama or OpenAI-compatible provider.
+- Study Prep has no OCR: scanned PDFs and image-only slides must be converted to
+  text or uploaded as slides/Markdown with selectable text.
 - The Android release APK is debug-signed and is intended for local
   installation; create a private keystore before distributing it.
 - The desktop app's `[transparency]` config is preserved on save but is not

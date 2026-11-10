@@ -13,6 +13,7 @@ import { ToastProvider } from './src/context/ToastContext';
 import { ChecklistScreen } from './src/screens/ChecklistScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { StatsScreen } from './src/screens/StatsScreen';
+import { StudyPrepScreen } from './src/screens/StudyPrepScreen';
 import { TimerScreen } from './src/screens/TimerScreen';
 
 function Shell() {
@@ -103,6 +104,9 @@ function Shell() {
         <View style={styles.content}>
           {tab === 'timer' ? <TimerScreen /> : null}
           {tab === 'checklist' ? <ChecklistScreen /> : null}
+          {tab === 'prep' ? (
+            <StudyPrepScreen onOpenChecklist={() => setTab('checklist')} />
+          ) : null}
           {tab === 'stats' ? <StatsScreen /> : null}
           {tab === 'settings' ? <SettingsScreen /> : null}
         </View>

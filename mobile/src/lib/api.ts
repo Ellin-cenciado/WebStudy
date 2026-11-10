@@ -1,5 +1,10 @@
 import { NativeModules } from 'react-native';
-import type { Config, PollPayload, StatsResponse } from './types';
+import type {
+  ChecklistImportSubject,
+  Config,
+  PollPayload,
+  StatsResponse,
+} from './types';
 
 type Envelope<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -68,6 +73,8 @@ export const api = {
     dispatch<PollPayload>('checkItem', { itemId }),
 
   persist: () => dispatch<PollPayload>('persist'),
+  importPlan: (subjects: ChecklistImportSubject[]) =>
+    dispatch<PollPayload>('importPlan', { subjects }),
 };
 
 export const preferences = {

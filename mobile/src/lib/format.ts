@@ -47,6 +47,32 @@ export function formatWeekday(weekday: string): string {
   return weekday.charAt(0).toUpperCase() + weekday.slice(1);
 }
 
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return '0 B';
+  }
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const index = Math.min(
+    units.length - 1,
+    Math.floor(Math.log(bytes) / Math.log(1024)),
+  );
+  const value = bytes / 1024 ** index;
+  return `${index === 0 ? Math.round(value) : value.toFixed(value >= 10 ? 0 : 1)} ${units[index]}`;
+}
+
+export function formatDateTime(isoTimestamp: string): string {
+  const date = new Date(isoTimestamp);
+  if (Number.isNaN(date.getTime())) {
+    return isoTimestamp;
+  }
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export function titleCase(value: string): string {
   return value
     .split('_')

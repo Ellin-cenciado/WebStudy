@@ -7,7 +7,7 @@ import {
 } from '@react-native-vector-icons/material-design-icons/static';
 import { useTheme } from '../context/ThemeContext';
 
-export type Tab = 'timer' | 'checklist' | 'stats' | 'settings';
+export type Tab = 'timer' | 'checklist' | 'prep' | 'stats' | 'settings';
 
 const TABS = [
   {
@@ -21,6 +21,12 @@ const TABS = [
     label: 'Checklist',
     sfSymbol: 'checklist',
     materialIcon: 'format-list-checks',
+  },
+  {
+    id: 'prep',
+    label: 'Prep',
+    sfSymbol: 'sparkles',
+    materialIcon: 'school-outline',
   },
   {
     id: 'stats',

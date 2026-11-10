@@ -122,7 +122,10 @@ but the old daemon does not use that lock.
 The **Study Prep** page turns rough class notes and text-based sources into
 polished Markdown notes and an editable checklist plan. The browser uploads
 files to the local backend, a background worker generates the notes, and you
-review and edit the plan before importing it into the checklist.
+review and edit the plan before importing it into the checklist. The Android
+app's **Prep** tab uses the same backend over the LAN: generation and source
+storage happen on the server, and the generated plan is imported into the
+phone's local checklist.
 
 ### Configure a model
 
@@ -137,7 +140,15 @@ are written to `config.toml`.
 | `WEBSTUDY_LLM_PROVIDER` | inferred | `ollama` or `openai-compatible` (display only) |
 | `WEBSTUDY_LLM_CONTEXT_TOKENS` | `16384` | Prompt budget for the adapter |
 | `WEBSTUDY_LLM_MAX_OUTPUT_TOKENS` | `2500` | Maximum generation per request |
+| `WEBSTUDY_LLM_REASONING_EFFORT` | empty | `none` disables thinking on supported models |
 | `WEBSTUDY_LLM_TIMEOUT_SECONDS` | `300` | Per-request timeout |
+
+Thinking models such as Qwen3.5 can spend the whole output budget on hidden
+reasoning, which produces an empty answer. On LM Studio, set
+`WEBSTUDY_LLM_REASONING_EFFORT=none` to disable thinking for these JSON tasks.
+The adapter retries once with reasoning disabled when a reply contains
+reasoning but no content; if the provider rejects the parameter, it retries
+without it and reports a clear error instead.
 
 Local Ollama example:
 
@@ -345,8 +356,9 @@ Then open <http://127.0.0.1:8000>.
 
 - Notifications are in-app toasts; desktop notifications are opt-in in
   Settings. Android has no background notification service.
-- Study Prep is a browser/desktop preview. The Android app does not expose it,
-  and it requires a reachable Ollama or OpenAI-compatible provider.
+- Study Prep requires a reachable Ollama or OpenAI-compatible provider. The
+  Android Prep tab also requires the WebStudy backend to be running and
+  reachable over the LAN; generation is not performed on the phone.
 - Study Prep has no OCR: scanned PDFs and image-only slides must be converted to
   text or uploaded as slides/Markdown with selectable text.
 - The Android release APK is debug-signed and is intended for local

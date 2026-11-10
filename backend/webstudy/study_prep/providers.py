@@ -34,6 +34,7 @@ class LLMConfig:
     max_output_tokens: int
     timeout_seconds: int
     provider: str
+    reasoning_effort: str = ""
 
     @property
     def configured(self) -> bool:
@@ -48,6 +49,9 @@ class LLMConfig:
         model = os.environ.get("WEBSTUDY_LLM_MODEL", "").strip()
         api_key = os.environ.get("WEBSTUDY_LLM_API_KEY", "").strip()
         provider = os.environ.get("WEBSTUDY_LLM_PROVIDER", "").strip().lower()
+        reasoning_effort = (
+            os.environ.get("WEBSTUDY_LLM_REASONING_EFFORT", "").strip().lower()
+        )
         if not provider:
             provider = (
                 "ollama"
@@ -66,6 +70,7 @@ class LLMConfig:
                 "WEBSTUDY_LLM_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS
             ),
             provider=provider,
+            reasoning_effort=reasoning_effort,
         )
 
     @property
@@ -92,8 +97,14 @@ class LLMProvider(Protocol):
 
 
 class OpenAICompatibleProvider:
-    def __init__(self, config: LLMConfig) -> None:
+    def __init__(
+        self,
+        config: LLMConfig,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
         self.config = config
+        self._transport = transport
 
     async def complete_json(
         self,
@@ -157,38 +168,94 @@ class OpenAICompatibleProvider:
             "stream": False,
         }
         timeout = httpx.Timeout(self.config.timeout_seconds, connect=15.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await self._post(client, url, headers, payload, json_mode=True)
-            if response.status_code in {400, 422}:
-                # Some local servers do not implement response_format. Retry
-                # without JSON mode and rely on the prompt + parser.
-                response = await self._post(
-                    client, url, headers, payload, json_mode=False
-                )
-        if response.status_code >= 400:
-            detail = _response_detail(response)
-            raise ProviderError(
-                f"The language model request failed ({response.status_code}): {detail}",
-                hint="Check WEBSTUDY_LLM_BASE_URL, WEBSTUDY_LLM_MODEL, and that Ollama or the API is running.",
+        client_kwargs: dict = {"timeout": timeout}
+        if self._transport is not None:
+            client_kwargs["transport"] = self._transport
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            reasoning_effort = self.config.reasoning_effort
+            response = await self._send_with_fallback(
+                client,
+                url,
+                headers,
+                payload,
+                reasoning_effort=reasoning_effort,
             )
-        try:
-            body = response.json()
-            content = body["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError, ValueError) as exc:
-            raise ProviderError(
-                "The language model returned an unexpected response.",
-                hint="Check that the configured endpoint is OpenAI-compatible.",
-            ) from exc
-        if isinstance(content, list):
-            content = "".join(
-                part.get("text", "") if isinstance(part, dict) else str(part)
-                for part in content
-            )
-        if not isinstance(content, str) or not content.strip():
-            raise ProviderError("The language model returned an empty response.")
-        return content
+            if response.status_code >= 400:
+                self._raise_http_error(response)
 
-    async def _post(
+            _body, choice, content = _response_message(response)
+            if content.strip():
+                return content
+
+            # Thinking models can spend the whole output budget on hidden
+            # reasoning, leaving ``content`` empty. Retry once with reasoning
+            # disabled when the provider reports any reasoning text.
+            if (
+                _reasoning_text(choice.get("message"))
+                and reasoning_effort.lower() != "none"
+            ):
+                retry = await self._send_with_fallback(
+                    client,
+                    url,
+                    headers,
+                    payload,
+                    reasoning_effort="none",
+                )
+                if retry.status_code < 400:
+                    _body, choice, content = _response_message(retry)
+                    if content.strip():
+                        return content
+
+            raise _empty_response_error(choice)
+
+    def _raise_http_error(self, response: httpx.Response) -> None:
+        detail = _response_detail(response)
+        raise ProviderError(
+            f"The language model request failed ({response.status_code}): {detail}",
+            hint="Check WEBSTUDY_LLM_BASE_URL, WEBSTUDY_LLM_MODEL, and that Ollama or the API is running.",
+        )
+
+    async def _send_with_fallback(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        headers: dict,
+        payload: dict,
+        *,
+        reasoning_effort: str,
+    ) -> httpx.Response:
+        response = await self._send(
+            client,
+            url,
+            headers,
+            payload,
+            json_mode=True,
+            reasoning_effort=reasoning_effort,
+        )
+        if response.status_code in {400, 422}:
+            # Some local servers do not implement response_format. Retry
+            # without JSON mode and rely on the prompt + parser.
+            response = await self._send(
+                client,
+                url,
+                headers,
+                payload,
+                json_mode=False,
+                reasoning_effort=reasoning_effort,
+            )
+        if response.status_code in {400, 422} and reasoning_effort:
+            # The provider may not know reasoning_effort at all.
+            response = await self._send(
+                client,
+                url,
+                headers,
+                payload,
+                json_mode=False,
+                reasoning_effort="",
+            )
+        return response
+
+    async def _send(
         self,
         client: httpx.AsyncClient,
         url: str,
@@ -196,14 +263,26 @@ class OpenAICompatibleProvider:
         payload: dict,
         *,
         json_mode: bool,
+        reasoning_effort: str,
+    ) -> httpx.Response:
+        request_payload = dict(payload)
+        if json_mode:
+            request_payload["response_format"] = {"type": "json_object"}
+        if reasoning_effort:
+            request_payload["reasoning_effort"] = reasoning_effort
+        return await self._post(client, url, headers, request_payload)
+
+    async def _post(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        headers: dict,
+        payload: dict,
     ) -> httpx.Response:
         last_error: Exception | None = None
         for attempt in range(3):
-            request_payload = dict(payload)
-            if json_mode:
-                request_payload["response_format"] = {"type": "json_object"}
             try:
-                response = await client.post(url, headers=headers, json=request_payload)
+                response = await client.post(url, headers=headers, json=payload)
             except (httpx.TimeoutException, httpx.ConnectError) as exc:
                 last_error = exc
                 if attempt < 2:
@@ -260,6 +339,85 @@ def _parse_json(text: str) -> dict:
     if not isinstance(parsed, dict):
         raise InvalidModelOutput("The language model returned JSON that is not an object.")
     return parsed
+
+
+def _response_message(
+    response: httpx.Response,
+) -> tuple[dict, dict, str]:
+    try:
+        body = response.json()
+        choice = body["choices"][0]
+        message = choice["message"]
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise ProviderError(
+            "The language model returned an unexpected response.",
+            hint="Check that the configured endpoint is OpenAI-compatible.",
+        ) from exc
+    if not isinstance(body, dict) or not isinstance(choice, dict):
+        raise ProviderError(
+            "The language model returned an unexpected response.",
+            hint="Check that the configured endpoint is OpenAI-compatible.",
+        )
+    if not isinstance(message, dict):
+        raise ProviderError(
+            "The language model returned an unexpected response.",
+            hint="Check that the configured endpoint is OpenAI-compatible.",
+        )
+    content = message.get("content")
+    if isinstance(content, list):
+        content = "".join(
+            part.get("text", "") if isinstance(part, dict) else str(part)
+            for part in content
+        )
+    if not isinstance(content, str):
+        content = ""
+    return body, choice, content
+
+
+def _reasoning_text(message: object) -> str:
+    if not isinstance(message, dict):
+        return ""
+    for key in ("reasoning_content", "reasoning"):
+        value = message.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+        if isinstance(value, list):
+            text = "".join(
+                part.get("text", "") if isinstance(part, dict) else str(part)
+                for part in value
+            )
+            if text.strip():
+                return text
+    return ""
+
+
+def _empty_response_error(choice: dict) -> ProviderError:
+    reasoning = _reasoning_text(choice.get("message"))
+    if reasoning:
+        if choice.get("finish_reason") == "length":
+            message = (
+                "The language model used its entire output budget on reasoning "
+                "and returned no answer."
+            )
+        else:
+            message = (
+                "The language model returned reasoning but no final answer."
+            )
+        return ProviderError(
+            message,
+            hint=(
+                "Set WEBSTUDY_LLM_REASONING_EFFORT=none for thinking models "
+                "(for example Qwen3.5 on LM Studio), or raise "
+                "WEBSTUDY_LLM_MAX_OUTPUT_TOKENS."
+            ),
+        )
+    return ProviderError(
+        "The language model returned an empty response.",
+        hint=(
+            "Check the model name and provider settings, or raise "
+            "WEBSTUDY_LLM_MAX_OUTPUT_TOKENS."
+        ),
+    )
 
 
 def _response_detail(response: httpx.Response) -> str:

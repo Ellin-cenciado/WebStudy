@@ -322,6 +322,11 @@ def dispatch(method: str, payload_json: str | None = None) -> str:
                 service.remove_item(str(payload.get("itemId", "")))
             elif method == "checkItem":
                 _queue_events(service.check_item(str(payload.get("itemId", ""))))
+            elif method == "importPlan":
+                subjects = payload.get("subjects")
+                if not isinstance(subjects, list):
+                    raise ValueError("subjects must be a list")
+                service.import_plan(subjects)
             elif method == "persist":
                 service._persist(force=True)
             elif method == "shutdown":

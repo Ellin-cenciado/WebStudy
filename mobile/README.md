@@ -7,7 +7,9 @@ Pydantic, or localhost connection on Android.
 
 The Python bridge calls `StudyService` directly. React Native polls it once a
 second and receives the same state, checklist, and event data that the web and
-desktop apps use.
+desktop apps use. The Study Prep screen is the one exception: it talks to a
+WebStudy backend over HTTP for source extraction and note generation, then uses
+the bridge to import the generated plan into the local checklist.
 
 ## Requirements
 
@@ -98,8 +100,9 @@ mobile/
 │   ├── hooks/useAction.ts        # Applies action responses and events
 │   ├── lib/api.ts                # JS bridge + Android preferences
 │   ├── lib/format.ts             # Clock/date formatting
+│   ├── lib/studyPrep.ts          # Study Prep backend HTTP client
 │   ├── lib/types.ts              # Shared engine payload types
-│   └── screens/                  # Timer, Checklist, Stats, Settings
+│   └── screens/                  # Timer, Checklist, Prep, Stats, Settings
 └── android/app/src/main/
     ├── java/com/webstudy/mobile/
     │   ├── WebStudyModule.kt     # Native module, single-threaded Python calls
@@ -128,13 +131,55 @@ files/webstudy/state/simplestudy/checklist.json
 files/webstudy/state/simplestudy/history.db
 ```
 
-Data never leaves the device. Clearing app storage or uninstalling WebStudy
-removes it. Use Android Settings → Apps → WebStudy → Storage → Clear data for a
-fresh start.
+Timer, checklist, and settings data never leave the device. Study Prep is the
+exception: the tab uploads the rough notes and selected sources to the backend
+you configure, and the generated notes and plan live on that server. Clearing
+app storage or uninstalling WebStudy removes the local data. Use Android
+Settings → Apps → WebStudy → Storage → Clear data for a fresh start.
 
 The theme preference is stored separately in Android `SharedPreferences` under
 the key `theme` (`system`, `light`, or `dark`); the engine's config remains the
 authority for study settings.
+
+## Study Prep
+
+The **Prep** tab generates polished notes and a study plan from rough notes and
+text-based PDF, PPTX, or Markdown sources. Extraction, model calls, and source
+storage run on the WebStudy backend, not on the phone, so the server must be
+running and reachable over the same network.
+
+Start the backend on the computer that runs Ollama (or another
+OpenAI-compatible provider), bound to all interfaces:
+
+```bash
+export WEBSTUDY_LLM_MODEL=qwen3.8:27b
+export WEBSTUDY_LLM_BASE_URL=http://127.0.0.1:11434/v1
+export WEBSTUDY_LLM_REASONING_EFFORT=none
+.venv/bin/webstudy --host 0.0.0.0
+```
+
+Use `--host 0.0.0.0` so the phone can connect. The model is configured with the
+`WEBSTUDY_LLM_*` environment variables described in the main README; no model
+settings are written to the app. The backend stores runs under
+`state_dir()/study-prep/<run_id>/`, including the raw uploads, extracted text,
+`notes.md`, `plan.json`, and `run.json`.
+
+In the phone's Prep tab, enter the computer's LAN address (for example
+`http://192.168.0.20:8000`) and tap **Connect**. The address is kept in Android
+`SharedPreferences` under `studyPrepServer`. Cleartext HTTP is enabled for the
+release manifest so the app can reach a LAN backend; use HTTPS or a trusted
+network if the traffic must be protected.
+
+The app polls the run until it is ready, then shows the Markdown notes and the
+plan. **Import plan to checklist** maps each plan subject to a local checklist
+subject and adds its items through the Python bridge. The import is atomic and
+does not replace existing subjects. Imported run IDs are remembered in
+`SharedPreferences` under `studyPrepImportedRuns`, so the app can label a plan
+as already imported. Cancelling, retrying, and deleting a run only affect the
+server; the local checklist is unchanged.
+
+Sources must contain selectable text: scanned PDFs and image-only slides are
+not supported because the pipeline has no OCR. DOCX is not accepted.
 
 ## Development checks
 
@@ -157,5 +202,10 @@ by importing `webstudy_bridge` with `PYTHONPATH=backend`, then calling
   to accrue while it is backgrounded or killed, but no alerts appear until the
   app is opened again.
 - Desktop-only settings (transparency, XDG paths) are not exposed on Android.
+- Study Prep needs the WebStudy backend and an Ollama or OpenAI-compatible
+  provider reachable over the LAN; the phone cannot generate notes offline.
+- Study Prep accepts only text-based PDF, PPTX, and Markdown. Scanned PDFs and
+  image-only slides are rejected because there is no OCR, and DOCX is not
+  supported.
 - The release APK is debug-signed and is intended for local installation, not
   store distribution.

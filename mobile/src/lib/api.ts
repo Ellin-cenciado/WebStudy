@@ -1,4 +1,5 @@
 import { NativeModules } from 'react-native';
+import type { AwayMarker, AwaySnapshot } from './away';
 import type {
   ChecklistImportSubject,
   Config,
@@ -16,6 +17,13 @@ type NativeBridge = {
   stopTimerService(): Promise<null>;
   isTimerServiceRunning(): Promise<boolean>;
   setTimerAppForeground(foreground: boolean): Promise<null>;
+  recordAwayMarker(
+    elapsedSeconds: number,
+    logicalDay: string,
+    running: boolean,
+  ): Promise<null>;
+  takeAwayMarker(): Promise<string | null>;
+  clearAwayMarker(): Promise<null>;
 };
 
 const native: NativeBridge | undefined = NativeModules.WebStudy;
@@ -101,6 +109,45 @@ export const backgroundTimer = {
       return Promise.resolve(null);
     }
     return native.setTimerAppForeground(foreground);
+  },
+  recordAway: (snapshot: AwaySnapshot) => {
+    if (native === undefined) {
+      return Promise.resolve(null);
+    }
+    return native.recordAwayMarker(
+      snapshot.elapsedSeconds,
+      snapshot.logicalDay,
+      snapshot.running,
+    );
+  },
+  takeAway: async (): Promise<AwayMarker | null> => {
+    if (native === undefined) {
+      return null;
+    }
+    const raw = await native.takeAwayMarker();
+    if (raw === null) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(raw) as Partial<AwayMarker>;
+      if (
+        typeof parsed.elapsedSeconds !== 'number' ||
+        typeof parsed.logicalDay !== 'string' ||
+        typeof parsed.running !== 'boolean' ||
+        typeof parsed.ageSeconds !== 'number'
+      ) {
+        return null;
+      }
+      return parsed as AwayMarker;
+    } catch {
+      return null;
+    }
+  },
+  clearAway: () => {
+    if (native === undefined) {
+      return Promise.resolve(null);
+    }
+    return native.clearAwayMarker();
   },
 };
 

@@ -116,8 +116,13 @@ management, disable battery optimization for WebStudy if the OS still stops the
 service; the app does not request that permission automatically.
 
 When you return to the app, a banner reports time credited while you were away
-(for example, “+12m 34s credited while you were away”). Force-stopping the app
-or rebooting stops the service; time while the process was dead is not credited.
+(for example, “+12m 34s credited while you were away”). The app also persists an
+away marker in native storage, so the banner still appears if Android destroyed
+the UI while the service kept running—for example, after swiping the app out of
+Recents. The marker includes a monotonic timestamp, so time that was not
+actually credited (such as a force-stop or reboot gap) is not reported as away
+time. Force-stopping the app or rebooting stops the service; time while the
+process was dead is not credited.
 
 ## Architecture
 

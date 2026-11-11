@@ -15,6 +15,12 @@ import {
   type AppStateStatus,
 } from 'react-native';
 import { api, backgroundTimer } from '../lib/api';
+import {
+  awayDelta,
+  markerDelta,
+  toAwaySnapshot,
+  type AwaySnapshot,
+} from '../lib/away';
 import { errorMessage } from '../lib/format';
 import type {
   ChecklistData,
@@ -42,7 +48,6 @@ interface LiveContextValue {
 const LiveContext = createContext<LiveContextValue | null>(null);
 
 const POLL_INTERVAL_MS = 1000;
-const AWAY_THRESHOLD_SECONDS = 60;
 
 export function LiveProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<StateEnvelope | null>(null);
@@ -58,11 +63,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const stateRef = useRef<StateEnvelope | null>(null);
   const serviceWanted = useRef(false);
   const permissionRequested = useRef(false);
-  const backgroundRef = useRef<{
-    elapsed: number;
-    running: boolean;
-    logicalDay: string;
-  } | null>(null);
+  const startupAwayChecked = useRef(false);
+  const backgroundRef = useRef<AwaySnapshot | null>(null);
 
   useEffect(() => {
     notificationsEnabled.current = config?.notifications ?? true;
@@ -117,6 +119,36 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       void backgroundTimer.setForeground(true).catch(() => {});
     }
   }, []);
+
+  // A marker survives when Android destroys the UI (for example, when the app
+  // is swiped out of Recents) but keeps the timer service alive.
+  useEffect(() => {
+    if (Platform.OS !== 'android' || state === null) {
+      return;
+    }
+    if (startupAwayChecked.current) {
+      return;
+    }
+    startupAwayChecked.current = true;
+    void (async () => {
+      try {
+        const marker = await backgroundTimer.takeAway();
+        if (marker === null) {
+          return;
+        }
+        const current = stateRef.current?.snapshot;
+        if (current === undefined) {
+          return;
+        }
+        const delta = markerDelta(marker, toAwaySnapshot(current));
+        if (delta !== null) {
+          setAwaySeconds(delta);
+        }
+      } catch {
+        // Without a readable marker there is no away summary to show.
+      }
+    })();
+  }, [state]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') {
@@ -190,13 +222,13 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     const leaveForeground = () => {
       void backgroundTimer.setForeground(false).catch(() => {});
       const snapshot = stateRef.current?.snapshot;
-      backgroundRef.current = snapshot
-        ? {
-            elapsed: snapshot.elapsed_seconds,
-            running: snapshot.running,
-            logicalDay: snapshot.logical_day,
-          }
-        : null;
+      const away = snapshot ? toAwaySnapshot(snapshot) : null;
+      backgroundRef.current = away;
+      if (away !== null) {
+        void backgroundTimer.recordAway(away).catch(() => {
+          // The in-memory snapshot still covers a normal return.
+        });
+      }
       void api.persist().catch(() => {
         // The timer service will persist on its next tick.
       });
@@ -204,6 +236,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
 
     const returnToForeground = async () => {
       void backgroundTimer.setForeground(true).catch(() => {});
+      void backgroundTimer.clearAway().catch(() => {});
       await refresh();
       const before = backgroundRef.current;
       backgroundRef.current = null;
@@ -219,11 +252,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         });
         return;
       }
-      if (!before.running || !after.running) {
-        return;
-      }
-      const delta = after.elapsed_seconds - before.elapsed;
-      if (delta >= AWAY_THRESHOLD_SECONDS) {
+      const delta = awayDelta(before, toAwaySnapshot(after));
+      if (delta !== null) {
         setAwaySeconds(delta);
       }
     };

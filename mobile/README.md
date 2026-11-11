@@ -89,6 +89,36 @@ The release build is currently signed with the React Native debug keystore so
 it can be installed locally. Replace `signingConfigs` in
 `android/app/build.gradle` with a private keystore before publishing it.
 
+## Background timer and notifications
+
+While a study session is running, the app starts an Android foreground service
+from the visible app. The service keeps the embedded Python engine ticking every
+five seconds, so the timer continues through backgrounding and screen lock. It
+uses Android's `SystemClock.elapsedRealtime()` for the engine clock, which
+counts deep-sleep time instead of losing it.
+
+The ongoing notification shows the current phase and a live countdown, with
+**Pause** and **Skip phase** actions. Phase changes, rest-over, item expiry, day
+rollover, and day completion are posted to a separate alert channel while the
+app is in the background. React Native keeps handling in-app toasts while the
+app is visible; the service does not consume those events in the foreground.
+
+Android 13+ requires notification permission. The app asks when you start your
+first session and also shows the status in **Settings → System notifications**.
+Without permission the timer still runs, but background alerts and lock-screen
+controls may not appear. The ongoing timer notification is required by the
+foreground service; the **Alerts** toggle only controls event notifications and
+in-app toasts.
+
+A partial wake lock is held during a running session so phase alerts stay
+timely. Pause the session to release it. On devices with aggressive battery
+management, disable battery optimization for WebStudy if the OS still stops the
+service; the app does not request that permission automatically.
+
+When you return to the app, a banner reports time credited while you were away
+(for example, “+12m 34s credited while you were away”). Force-stopping the app
+or rebooting stops the service; time while the process was dead is not credited.
+
 ## Architecture
 
 ```text
@@ -105,20 +135,26 @@ mobile/
 │   └── screens/                  # Timer, Checklist, Prep, Stats, Settings
 └── android/app/src/main/
     ├── java/com/webstudy/mobile/
-    │   ├── WebStudyModule.kt     # Native module, single-threaded Python calls
+    │   ├── WebStudyEngine.kt     # Shared serialised Python runtime
+    │   ├── WebStudyModule.kt     # Native module + timer service controls
+    │   ├── TimerService.kt       # Foreground timer and notification actions
+    │   ├── TimerNotifications.kt # Channels, ongoing notification, alerts
     │   ├── WebStudyPackage.kt
     │   ├── MainActivity.kt
     │   └── MainApplication.kt
     └── python/webstudy_bridge.py # JSON bridge around StudyService
 ```
 
-The Kotlin module starts Python on a background executor and lazily initializes
-the bridge. React Native calls `NativeModules.WebStudy.dispatch(method, json)`;
-the bridge returns `{ok: true, data: ...}` or `{ok: false, error: ...}`.
+The shared Kotlin engine starts Python on a background executor and lazily
+initializes the bridge. React Native and the foreground timer service both call
+`NativeModules.WebStudy.dispatch(method, json)`; the bridge returns
+`{ok: true, data: ...}` or `{ok: false, error: ...}`.
 
 The UI polls `poll` every second while the app is active. Starting/pausing,
 checklist edits, and config saves send their own action and immediately apply
-the returned payload. Engine events are shown as in-app toasts. Tab icons use
+the returned payload. Engine events are shown as in-app toasts. While a session
+is running, the foreground service also polls every five seconds so the timer
+and event alerts continue when the UI is not active. Tab icons use
 Material Design Icons on Android (bundled from
 `@react-native-vector-icons/material-design-icons`) and SF Symbols on iOS.
 
@@ -212,11 +248,15 @@ by importing `webstudy_bridge` with `PYTHONPATH=backend`, then calling
 
 ## Current limitations
 
-- Notifications are in-app toasts only; there is no Android notification
-  channel or background service.
-- The app computes elapsed time from the engine's timestamps, so time continues
-  to accrue while it is backgrounded or killed, but no alerts appear until the
-  app is opened again.
+- The background timer requires Android notification permission on Android 13+.
+  Without it the timer still runs, but the ongoing notification, lock-screen
+  controls, and background alerts may not be visible.
+- Force-stopping the app or rebooting stops the foreground service. Time while
+  the process was dead is not credited; the persisted session resumes on the
+  next launch.
+- Aggressive OEM battery managers may still stop the service. Disable battery
+  optimization for WebStudy if that happens; the app does not request the
+  exemption automatically.
 - Desktop-only settings (transparency, XDG paths) are not exposed on Android.
 - Study Prep needs the WebStudy backend and an Ollama or OpenAI-compatible
   provider reachable over the LAN; the phone cannot generate notes offline.

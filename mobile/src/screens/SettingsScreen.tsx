@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import {
+  Badge,
   Button,
   Card,
   Divider,
@@ -14,6 +15,7 @@ import {
   ToggleRow,
 } from '../components/ui';
 import { useConfig } from '../context/ConfigContext';
+import { useLive } from '../context/LiveContext';
 import { useTheme, type ThemePreference } from '../context/ThemeContext';
 import { useToast } from '../context/ToastContext';
 import { errorMessage, titleCase } from '../lib/format';
@@ -98,6 +100,7 @@ export function SettingsScreen() {
   const { config, loading, error, refresh, save } = useConfig();
   const { colors, preference, setPreference } = useTheme();
   const { push } = useToast();
+  const { notificationPermission, requestNotificationPermission } = useLive();
   const [draft, setDraft] = useState<Config | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -278,11 +281,44 @@ export function SettingsScreen() {
           value={draft.auto_start}
         />
         <ToggleRow
-          description="Show phase, rest, and day-complete alerts while the app is open."
-          label="In-app alerts"
+          description="Show phase, rest, and day-complete alerts. The timer notification stays visible while a session runs in the background."
+          label="Alerts"
           onValueChange={value => patch({ notifications: value })}
           value={draft.notifications}
         />
+        <View style={styles.notificationRow}>
+          <View style={styles.notificationBody}>
+            <Text style={[styles.notificationTitle, { color: colors.text }]}>
+              System notifications
+            </Text>
+            <Text style={[styles.notificationHint, { color: colors.textMuted }]}>
+              {notificationPermission === 'granted'
+                ? 'Allowed. Background timer and lock-screen controls are available.'
+                : notificationPermission === 'denied'
+                  ? 'Denied. Background alerts and lock-screen controls will not appear.'
+                  : 'Not requested yet. The app asks when you start a session.'}
+            </Text>
+          </View>
+          {notificationPermission === 'granted' ? (
+            <Badge label="Allowed" tone="good" />
+          ) : (
+            <View style={styles.notificationActions}>
+              <Button
+                label="Allow"
+                onPress={() => void requestNotificationPermission()}
+                size="sm"
+              />
+              {notificationPermission === 'denied' ? (
+                <Button
+                  label="Settings"
+                  onPress={() => void Linking.openSettings()}
+                  size="sm"
+                  variant="ghost"
+                />
+              ) : null}
+            </View>
+          )}
+        </View>
       </SettingsSection>
 
       <SettingsSection
@@ -455,5 +491,18 @@ const styles = StyleSheet.create({
   help: { fontSize: 10, lineHeight: 15 },
   helpGrow: { flex: 1, minWidth: 150 },
   paragraph: { fontSize: 12, lineHeight: 18 },
+  notificationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+  },
+  notificationBody: { flex: 1, gap: 2 },
+  notificationTitle: { fontSize: 13, fontWeight: '700' },
+  notificationHint: { fontSize: 11, lineHeight: 16 },
+  notificationActions: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
   footer: { fontSize: 10, textAlign: 'center', paddingBottom: 4 },
 });

@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   Badge,
   Button,
@@ -12,7 +12,7 @@ import {
 import { useLive } from '../context/LiveContext';
 import { useTheme } from '../context/ThemeContext';
 import { useAction } from '../hooks/useAction';
-import { api } from '../lib/api';
+import { api, backgroundTimer } from '../lib/api';
 import {
   formatClock,
   formatHours,
@@ -51,7 +51,14 @@ function phaseTone(
 }
 
 export function TimerScreen() {
-  const { state, connected } = useLive();
+  const {
+    state,
+    connected,
+    awaySeconds,
+    dismissAway,
+    notificationPermission,
+    requestNotificationPermission,
+  } = useLive();
   const { colors } = useTheme();
   const { pending, run } = useAction();
   const snapshot = state?.snapshot;
@@ -97,6 +104,18 @@ export function TimerScreen() {
         ? 'Stay with it.'
         : 'Ready when you are.';
 
+  const onPrimary = async () => {
+    if (!running) {
+      await requestNotificationPermission();
+    }
+    const ok = await run(() => (running ? api.pause() : api.start()));
+    if (ok && !running) {
+      void backgroundTimer.start().catch(() => {
+        // The state effect will retry while the app is still visible.
+      });
+    }
+  };
+
   return (
     <Screen>
       <PageHeader
@@ -104,6 +123,70 @@ export function TimerScreen() {
         subtitle={`${titleCase(snapshot.weekday)} · ${snapshot.logical_day}`}
         actions={<Badge label={running ? 'Running' : 'Paused'} tone={running ? 'good' : 'muted'} />}
       />
+
+      {awaySeconds !== null ? (
+        <View
+          style={[
+            styles.awayBanner,
+            {
+              backgroundColor: colors.goodSoft,
+              borderColor: colors.goodBorder,
+            },
+          ]}>
+          <View style={styles.awayBody}>
+            <Text style={[styles.awayTitle, { color: colors.good }]}>
+              Timer kept running
+            </Text>
+            <Text style={[styles.awayText, { color: colors.good }]}>
+              +{formatClock(awaySeconds)} credited while you were away.
+            </Text>
+          </View>
+          <Pressable
+            accessibilityLabel="Dismiss timer update"
+            hitSlop={10}
+            onPress={dismissAway}
+            style={styles.awayDismiss}>
+            <Text style={[styles.awayDismissText, { color: colors.good }]}>
+              ×
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {notificationPermission === 'denied' ? (
+        <View
+          style={[
+            styles.permissionBanner,
+            {
+              backgroundColor: colors.warnSoft,
+              borderColor: colors.warnBorder,
+            },
+          ]}>
+          <View style={styles.awayBody}>
+            <Text style={[styles.awayTitle, { color: colors.warn }]}>
+              Notifications are off
+            </Text>
+            <Text style={[styles.awayText, { color: colors.warn }]}>
+              Background alerts and lock-screen controls need notification
+              permission.
+            </Text>
+          </View>
+          <View style={styles.permissionActions}>
+            <Button
+              label="Allow"
+              onPress={() => void requestNotificationPermission()}
+              size="sm"
+              variant="secondary"
+            />
+            <Button
+              label="Settings"
+              onPress={() => void Linking.openSettings()}
+              size="sm"
+              variant="ghost"
+            />
+          </View>
+        </View>
+      ) : null}
 
       <Card style={styles.timerCard}>
         <View style={styles.timerTop}>
@@ -198,9 +281,7 @@ export function TimerScreen() {
             disabled={!canControl}
             label={primaryLabel}
             left={running ? '❚❚' : '▶'}
-            onPress={() =>
-              void run(() => (running ? api.pause() : api.start()))
-            }
+            onPress={() => void onPrimary()}
             pending={pending}
             style={styles.grow}
           />
@@ -266,6 +347,28 @@ export function TimerScreen() {
 }
 
 const styles = StyleSheet.create({
+  awayBanner: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  awayBody: { flex: 1, gap: 2 },
+  awayTitle: { fontSize: 13, fontWeight: '700' },
+  awayText: { fontSize: 12, lineHeight: 17 },
+  awayDismiss: { paddingHorizontal: 4 },
+  awayDismissText: { fontSize: 20, lineHeight: 20, opacity: 0.7 },
+  permissionBanner: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  permissionActions: { alignItems: 'flex-end', gap: 6 },
   loadingCard: {
     minHeight: 220,
     alignItems: 'center',

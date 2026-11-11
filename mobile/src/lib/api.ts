@@ -12,6 +12,10 @@ type NativeBridge = {
   dispatch(method: string, payload: string): Promise<string>;
   getPreference(key: string): Promise<string | null>;
   setPreference(key: string, value: string): Promise<null>;
+  startTimerService(): Promise<null>;
+  stopTimerService(): Promise<null>;
+  isTimerServiceRunning(): Promise<boolean>;
+  setTimerAppForeground(foreground: boolean): Promise<null>;
 };
 
 const native: NativeBridge | undefined = NativeModules.WebStudy;
@@ -75,6 +79,29 @@ export const api = {
   persist: () => dispatch<PollPayload>('persist'),
   importPlan: (subjects: ChecklistImportSubject[]) =>
     dispatch<PollPayload>('importPlan', { subjects }),
+};
+
+export const backgroundTimer = {
+  start: () => {
+    if (native === undefined) {
+      return Promise.reject(
+        new Error('The background timer service is unavailable.'),
+      );
+    }
+    return native.startTimerService();
+  },
+  stop: () => {
+    if (native === undefined) {
+      return Promise.resolve(null);
+    }
+    return native.stopTimerService();
+  },
+  setForeground: (foreground: boolean) => {
+    if (native === undefined) {
+      return Promise.resolve(null);
+    }
+    return native.setTimerAppForeground(foreground);
+  },
 };
 
 export const preferences = {

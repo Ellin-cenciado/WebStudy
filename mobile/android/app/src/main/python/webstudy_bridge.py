@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 _lock = threading.RLock()
@@ -83,13 +83,65 @@ def _snapshot_payload(service):
     }
 
 
-def _poll_payload(service):
+def _notification_payload(service):
+    snapshot = service.snapshot()
+    item = service.checklist.active_item()
+    if snapshot.day_complete:
+        title = "Day complete"
+        body = "Today's study goal is finished."
+    elif snapshot.is_free_day:
+        title = "Free day"
+        body = "No study required today."
+    elif not snapshot.running:
+        title = "Study timer paused"
+        body = "Open WebStudy to resume."
+    elif snapshot.phase == "break":
+        title = "Break"
+        body = item.text if item is not None else "Step away for a moment."
+    else:
+        title = "Studying"
+        body = item.text if item is not None else "Keep going."
+    return {
+        "title": title,
+        "body": body,
+        "phase": snapshot.phase,
+        "remaining_seconds": snapshot.phase_remaining_seconds,
+        "elapsed_seconds": snapshot.elapsed_seconds,
+        "running": snapshot.running,
+        "day_complete": snapshot.day_complete,
+        "is_free_day": snapshot.is_free_day,
+        "notifications_enabled": service.config.notifications,
+    }
+
+
+def _poll_payload(service, *, drain_events: bool = True):
     _queue_events(service.tick())
+    events = _drain_events() if drain_events else list(_pending_events)
     return {
         "state": _snapshot_payload(service),
         "checklist": service.checklist_data(),
-        "events": _drain_events(),
+        "notification": _notification_payload(service),
+        "events": events,
     }
+
+
+def _android_clock():
+    """Use Android's boot-time clock so deep sleep counts as study time."""
+    try:
+        from java import jclass
+
+        system_clock = jclass("android.os.SystemClock")
+
+        class AndroidClock:
+            def now(self):
+                return datetime.now().astimezone()
+
+            def monotonic(self):
+                return system_clock.elapsedRealtime() / 1000.0
+
+        return AndroidClock()
+    except Exception:
+        return None
 
 
 def _config_payload(config):
@@ -233,7 +285,7 @@ def init(home: str) -> str:
         if not config_path.exists():
             config_mod.save(config, config_path)
 
-        service = StudyService(config)
+        service = StudyService(config, clock=_android_clock())
         if config.auto_start:
             service.start()
         _queue_events(service.tick())
@@ -263,7 +315,12 @@ def dispatch(method: str, payload_json: str | None = None) -> str:
             service = _service
 
             if method == "poll":
-                return _ok(_poll_payload(service))
+                return _ok(
+                    _poll_payload(
+                        service,
+                        drain_events=bool(payload.get("drainEvents", True)),
+                    )
+                )
 
             if method == "config":
                 return _ok(_config_payload(service.config))

@@ -131,6 +131,17 @@ class ServiceRolloverTest(ServiceTestBase):
 
 
 class ServiceEventTest(ServiceTestBase):
+    def test_long_background_gap_credits_time_and_phase_transition(self):
+        clock = FakeClock(at(MONDAY))
+        service = self.make_service(clock)
+        service.start()
+        clock.advance(45 * MINUTE)
+        events = service.tick()
+        snapshot = service.snapshot()
+        self.assertEqual(snapshot.elapsed_seconds, 45 * MINUTE)
+        self.assertEqual(snapshot.phase, "break")
+        self.assertTrue(any(event.kind == "phase" for event in events))
+
     def test_phase_change_emits_event_and_notification(self):
         notifier = RecordingNotifier()
         clock = FakeClock(at(MONDAY))

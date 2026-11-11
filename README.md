@@ -284,6 +284,12 @@ server; React Native calls `StudyService` directly through a JSON bridge. It
 works fully offline and keeps its data in app-private storage, separate from
 the desktop data directory.
 
+While a session is running, an Android foreground service keeps the timer and
+event alerts alive through backgrounding and screen lock. It shows an ongoing
+notification with pause/skip actions, requests notification permission on
+Android 13+, and uses Android's elapsed-realtime clock so deep-sleep time is
+counted.
+
 Requirements are JDK 21, Android SDK 36, NDK 27.1, CMake 3.22.1, and Python
 3.14. See [`mobile/README.md`](mobile/README.md) for the full setup, data paths,
 and architecture.
@@ -396,8 +402,10 @@ Then open <http://127.0.0.1:8000>.
 
 ## Notes and limitations
 
-- Notifications are in-app toasts; desktop notifications are opt-in in
-  Settings. Android has no background notification service.
+- Desktop notifications are opt-in in Settings. Android uses a foreground
+  service and local notifications while a session is running; Android 13+
+  requires notification permission for the notification and lock-screen
+  controls.
 - Study Prep requires a reachable Ollama or OpenAI-compatible provider. The
   Android Prep tab also requires the WebStudy backend to be running and
   reachable over the LAN; generation is not performed on the phone.

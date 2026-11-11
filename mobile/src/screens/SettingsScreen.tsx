@@ -281,7 +281,7 @@ export function SettingsScreen() {
           value={draft.auto_start}
         />
         <ToggleRow
-          description="Show phase, rest, and day-complete alerts. The timer notification stays visible while a session runs in the background."
+          description="Show phase, rest, and day-complete alerts. The ongoing timer notification stays visible while a session runs."
           label="Alerts"
           onValueChange={value => patch({ notifications: value })}
           value={draft.notifications}

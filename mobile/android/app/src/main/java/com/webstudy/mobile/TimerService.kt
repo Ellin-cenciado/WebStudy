@@ -170,7 +170,12 @@ class TimerService : Service() {
         WebStudyEngine.dispatchAsync(applicationContext, "skipPhase") { result ->
             handler.post {
                 result.fold(
-                    onSuccess = { applyPayload(it) },
+                    onSuccess = {
+                        applyPayload(it)
+                        if (isRunning) {
+                            startTimer()
+                        }
+                    },
                     onFailure = { error ->
                         Log.e(TAG, "Timer skip failed", error)
                         TimerNotifications.postAlert(

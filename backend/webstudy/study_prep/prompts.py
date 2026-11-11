@@ -60,6 +60,7 @@ def outline_prompt(
     catalog: str,
     options: RunOptions,
     language: str,
+    focus_terms: tuple[str, ...] | list[str] = (),
 ) -> tuple[str, str]:
     language_name = LANGUAGE_NAMES.get(language, language)
     system = (
@@ -73,6 +74,11 @@ def outline_prompt(
 OUTPUT LANGUAGE: {language_name} ({language})
 DEPTH: {options.depth}
 TARGET MINUTES: {options.target_minutes or "not specified"}
+EXAM SCOPE FOCUS FROM ROUGH NOTES: {
+    ", ".join(term.upper() for term in focus_terms)
+    if focus_terms
+    else "not explicitly restricted"
+}
 
 ROUGH CLASS NOTES
 -----------------
@@ -86,6 +92,20 @@ Return one JSON object with exactly this shape:
 {json.dumps(OUTLINE_SCHEMA, ensure_ascii=False, indent=2)}
 
 Rules:
+- The rough notes define what the exam covers, and their scope instructions
+  take precedence over the source catalog. If they restrict the exam to a
+  topic (for example "only ATAM", "solamente ATAM", "únicamente el método
+  ATAM"), include only the chapters and sections that actually cover that
+  topic. Omit unrelated chapters and sections entirely.
+- Never include a chapter merely because it is present in the catalog, because
+  it is early in the source, or because most of the source would otherwise be
+  unused. A chapter must directly support a topic that the rough notes put in
+  scope.
+- When the focus appears in one subsection, use its parent chapter and create
+  a narrow section whose start_unit/end_unit cover only that subsection and
+  its immediate explanation.
+- Do not include other chapters with exam_scope=false as background. If it is
+  outside the requested scope, it does not belong in this document.
 - Use only chapter_id values that appear in the source catalog.
 - Treat each source chapter as a separate study subject later. Do not merge
   chapters from different sources into one chapter.
@@ -94,8 +114,9 @@ Rules:
 - start_unit and end_unit must be integers inside that chapter's range. They
   must identify the source pages/slides/sections needed for that section. If
   the chapter has nested headings, use them to choose ranges.
-- Mark exam_scope false when the rough notes say a topic is not part of the
-  exam or is optional. Preserve every explicit exam-scope instruction.
+- Mark exam_scope false only when the rough notes say an included topic is
+  optional or explicitly excluded. Scope restrictions must remove material,
+  not relabel it.
 - difficulty is 1 (easy) to 5 (hard).
 - search_queries should contain 2-5 short phrases that will retrieve the most
   relevant source passages for that section.

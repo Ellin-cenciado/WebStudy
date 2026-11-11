@@ -33,15 +33,18 @@ from .prompts import detect_language, outline_prompt, section_prompt
 from .providers import LLMProvider
 from .retrieval import (
     Chunk,
+    ScopeFocus,
     build_chunks,
     build_rough_chunks,
     format_chunks,
+    scope_focus,
     select_rough_chunks,
     select_source_chunks,
     source_catalog,
+    text_matches_focus,
     unit_phrase,
 )
-from .sources import Chapter, ExtractedSource, extract_source, rough_notes_source
+from .sources import Chapter, ExtractedSource, Heading, extract_source, rough_notes_source
 from .store import RunStore
 
 ProgressCallback = Callable[[], Awaitable[None]]
@@ -101,6 +104,11 @@ class StudyPrepPipeline:
             rough_notes=rough_notes,
             catalog_sources=catalog_sources,
             language=language,
+        )
+        outline = self._apply_scope_filter(
+            outline,
+            catalog_sources,
+            scope_focus(rough_notes),
         )
         chapters = self._normalize_outline(outline, catalog_sources)
         if not chapters:
@@ -247,7 +255,12 @@ class StudyPrepPipeline:
     ) -> OutlineResponse:
         budget = self.provider.config.char_budget
         catalog_budget = min(14_000, max(3_000, budget // 2))
-        catalog = source_catalog(catalog_sources, max_chars=catalog_budget)
+        focus = scope_focus(rough_notes)
+        catalog = source_catalog(
+            catalog_sources,
+            max_chars=catalog_budget,
+            focus=rough_notes,
+        )
         rough_budget = max(1_000, budget - len(catalog) - 2_500)
         rough_excerpt = rough_notes[:rough_budget]
         if len(rough_notes) > len(rough_excerpt):
@@ -259,6 +272,7 @@ class StudyPrepPipeline:
             catalog=catalog or "(no source catalog)",
             options=self.summary.options,
             language=language,
+            focus_terms=focus.terms,
         )
         raw = await self.provider.complete_json(
             system=system,
@@ -272,6 +286,104 @@ class StudyPrepPipeline:
             raise InvalidModelOutput(
                 f"The language model returned an invalid outline: {exc}"
             ) from exc
+
+    def _apply_scope_filter(
+        self,
+        outline: OutlineResponse,
+        catalog_sources: list[ExtractedSource],
+        focus: ScopeFocus,
+    ) -> OutlineResponse:
+        """Enforce explicit rough-note scope restrictions deterministically.
+
+        Models sometimes ignore a short instruction such as "only ATAM" and
+        return every chapter. When the rough notes clearly restrict the exam
+        and matching headings exist, rebuild the outline from those headings
+        instead of trusting the model's chapter selection.
+        """
+        if not focus.active:
+            return outline
+
+        lookup: dict[str, tuple[ExtractedSource, Chapter]] = {}
+        matched: dict[str, list[Heading]] = {}
+        for source in catalog_sources:
+            for chapter in source.chapters:
+                lookup[chapter.id] = (source, chapter)
+                hits = [
+                    heading
+                    for heading in source.headings
+                    if chapter.unit_start <= heading.unit <= chapter.unit_end
+                    and text_matches_focus(heading.title, focus.terms)
+                ]
+                deeper = [heading for heading in hits if heading.level > 0]
+                if deeper:
+                    hits = deeper
+                if hits:
+                    matched[chapter.id] = hits
+
+        # No lexical match or a very broad match: leave the model's outline
+        # intact and let the prompt handle semantic/translated topic names.
+        if not matched or len(matched) > 8:
+            return outline
+
+        chapters = self._focused_chapters(matched, lookup, focus)
+        if not chapters:
+            return outline
+        return outline.model_copy(update={"chapters": chapters})
+
+    def _focused_chapters(
+        self,
+        matched: dict[str, list[Heading]],
+        lookup: dict[str, tuple[ExtractedSource, Chapter]],
+        focus: ScopeFocus,
+    ) -> list[OutlineChapter]:
+        chapters: list[OutlineChapter] = []
+        total = 0
+        for chapter_id, hits in matched.items():
+            source, chapter = lookup[chapter_id]
+            ordered = sorted(
+                (
+                    heading
+                    for heading in source.headings
+                    if chapter.unit_start <= heading.unit <= chapter.unit_end
+                ),
+                key=lambda heading: heading.unit,
+            )
+            sections: list[OutlineSection] = []
+            seen: set[str] = set()
+            for heading in sorted(hits, key=lambda item: item.unit):
+                if total >= 12:
+                    break
+                title = " ".join(heading.title.split()).strip()
+                key = title.lower()
+                if not title or key in seen:
+                    continue
+                seen.add(key)
+                if heading.level == 0 or heading.unit <= chapter.unit_start:
+                    start, end = chapter.unit_start, chapter.unit_end
+                else:
+                    start = heading.unit
+                    end = chapter.unit_end
+                    for candidate in ordered:
+                        if candidate.unit > heading.unit and candidate.level <= heading.level:
+                            end = max(heading.unit, candidate.unit - 1)
+                            break
+                sections.append(
+                    OutlineSection(
+                        title=title[:200],
+                        focus=f"Focus only on: {', '.join(focus.terms)}.",
+                        exam_scope=True,
+                        difficulty=3,
+                        start_unit=start,
+                        end_unit=end,
+                        search_queries=[title, *focus.terms][:5],
+                    )
+                )
+                total += 1
+            if sections:
+                chapters.append(
+                    OutlineChapter(chapter_id=chapter_id, sections=sections)
+                )
+        return chapters
 
     def _normalize_outline(
         self,
@@ -556,6 +668,7 @@ class StudyPrepPipeline:
 
         subjects: list[PlanSubject] = []
         used_names: set[str] = set()
+        multi_source = len({chapter.source.id for chapter in chapters}) > 1
         item_number = 0
         for index, (chapter, draft_section, note_section) in enumerate(section_meta):
             subject_key = chapter.chapter.id
@@ -591,6 +704,9 @@ class StudyPrepPipeline:
                             exam_scope=draft_section.exam_scope,
                             part=part_index,
                             parts=len(parts),
+                            source_label=(
+                                chapter.source.title if multi_source else ""
+                            ),
                         ),
                         duration_seconds=part_minutes * 60,
                         kind="study",

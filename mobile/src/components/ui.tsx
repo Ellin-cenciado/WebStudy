@@ -1,4 +1,10 @@
-import React, { useEffect, useRef, useState, type ReactNode } from 'react';
+import React, {
+  forwardRef,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -9,8 +15,10 @@ import {
   TextInput,
   View,
   type ScrollViewProps,
+  type ScrollViewInstance,
   type StyleProp,
   type TextInputProps,
+  type ViewProps,
   type ViewStyle,
 } from 'react-native';
 import { useTheme, type Palette } from '../context/ThemeContext';
@@ -69,22 +77,28 @@ export function Spinner({ color }: { color?: string }) {
   return <ActivityIndicator color={color ?? colors.accent} size="small" />;
 }
 
-export function Screen({
-  children,
-  contentContainerStyle,
-  ...props
-}: ScrollViewProps & { children: ReactNode }) {
+export const Screen = forwardRef<
+  ScrollViewInstance,
+  ScrollViewProps & { children: ReactNode; floating?: ReactNode }
+>(function ScreenView(
+  { children, contentContainerStyle, floating, ...props },
+  ref,
+) {
   return (
-    <ScrollView
-      contentContainerStyle={[styles.screenContent, contentContainerStyle]}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-      style={styles.screen}
-      {...props}>
-      {children}
-    </ScrollView>
+    <View style={styles.screen}>
+      <ScrollView
+        ref={ref}
+        contentContainerStyle={[styles.screenContent, contentContainerStyle]}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        style={styles.screen}
+        {...props}>
+        {children}
+      </ScrollView>
+      {floating}
+    </View>
   );
-}
+});
 
 export function PageHeader({
   title,
@@ -115,14 +129,17 @@ export function Card({
   children,
   style,
   padded = true,
+  onLayout,
 }: {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
   padded?: boolean;
+  onLayout?: ViewProps['onLayout'];
 }) {
   const { colors } = useTheme();
   return (
     <View
+      onLayout={onLayout}
       style={[
         styles.card,
         {

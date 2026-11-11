@@ -18,17 +18,27 @@ from webstudy.study_prep.estimator import (
     estimate_section_minutes,
     scale_minutes,
     split_minutes,
+    task_text,
 )
 from webstudy.study_prep.manager import StudyPrepManager
 from webstudy.study_prep.models import (
     RunOptions,
     RunSummary,
+    SourceRef,
     SourceSummary,
     utc_now,
 )
 from webstudy.study_prep.pipeline import StudyPrepPipeline
 from webstudy.study_prep.providers import LLMConfig
+from webstudy.study_prep.retrieval import (
+    scope_focus,
+    source_catalog,
+    text_matches_focus,
+)
 from webstudy.study_prep.sources import (
+    Chapter,
+    ExtractedSource,
+    Heading,
     extract_markdown_text,
     extract_source,
 )
@@ -58,6 +68,7 @@ class FakeProvider:
     def __init__(self) -> None:
         self.outline_calls = 0
         self.section_calls = 0
+        self.last_outline_prompt = ""
 
     async def complete_json(
         self,
@@ -69,6 +80,7 @@ class FakeProvider:
     ) -> dict:
         if "Plan a study document" in prompt:
             self.outline_calls += 1
+            self.last_outline_prompt = prompt
             chapter_ids = re.findall(r"CHAPTER (\S+)", prompt)
             chapters = []
             for chapter_id in chapter_ids:
@@ -216,6 +228,141 @@ class ExtractionTest(unittest.TestCase):
         self.assertIn("Photosynthesis", source.units[0].text)
         self.assertIn("Likely exam topic", source.units[0].text)
         self.assertIn("Mitochondria", source.units[1].text)
+
+
+class ScopeCatalogTest(unittest.TestCase):
+    def test_scope_focus_extracts_topic_and_ignores_instruction_words(self) -> None:
+        focus = scope_focus("Entra únicamente el método ATAM")
+        self.assertTrue(focus.active)
+        self.assertEqual(focus.terms, ("atam",))
+        self.assertTrue(
+            text_matches_focus("4.6.1 The ATAM Analysis Method", focus.terms)
+        )
+        self.assertFalse(
+            text_matches_focus("4.1 Role of Software Architecture", focus.terms)
+        )
+        self.assertFalse(scope_focus("No solo entra ATAM").restricted)
+
+    def test_catalog_keeps_a_matching_heading_beyond_the_display_limit(self) -> None:
+        headings = [
+            Heading(title=f"4.{index} Topic {index}", unit=index, level=1)
+            for index in range(1, 15)
+        ]
+        headings.append(
+            Heading(title="4.6.1 The ATAM Analysis Method", unit=15, level=2)
+        )
+        source = ExtractedSource(
+            id="s1",
+            filename="architecture.pdf",
+            kind="pdf",
+            title="Software Architecture",
+            unit_label="p.",
+            headings=headings,
+            chapters=[
+                Chapter(
+                    id="s1_c0",
+                    title="Chapter 4. Software Architecture",
+                    unit_start=1,
+                    unit_end=15,
+                )
+            ],
+        )
+
+        catalog = source_catalog(
+            [source], focus="Entra únicamente el método ATAM"
+        )
+
+        self.assertIn("EXAM FOCUS FROM ROUGH NOTES: ATAM", catalog)
+        self.assertIn("* 4.6.1 The ATAM Analysis Method", catalog)
+
+    def test_catalog_omits_unrelated_chapters_when_scope_is_explicit(self) -> None:
+        source = ExtractedSource(
+            id="s1",
+            filename="An%20Integrated%20Approach.pdf",
+            kind="pdf",
+            title="An Integrated Approach",
+            unit_label="p.",
+            headings=[
+                Heading(title="Chapter 1. Introduction", unit=1, level=0),
+                Heading(title="1.1 Motivation", unit=2, level=1),
+                Heading(title="Chapter 2. Software Architecture", unit=10, level=0),
+                Heading(
+                    title="2.2.1 The ATAM Analysis Method", unit=12, level=2
+                ),
+            ],
+            chapters=[
+                Chapter(
+                    id="s1_c0",
+                    title="Chapter 1. Introduction",
+                    unit_start=1,
+                    unit_end=9,
+                ),
+                Chapter(
+                    id="s1_c1",
+                    title="Chapter 2. Software Architecture",
+                    unit_start=10,
+                    unit_end=20,
+                ),
+            ],
+        )
+
+        catalog = source_catalog([source], focus="Only ATAM")
+
+        self.assertIn("Chapter 2. Software Architecture", catalog)
+        self.assertNotIn("Chapter 1. Introduction", catalog)
+        self.assertIn("SOURCE s1 | An Integrated Approach", catalog)
+        self.assertNotIn("%20", catalog)
+
+    def test_task_text_uses_locations_not_the_source_filename(self) -> None:
+        ref = SourceRef(
+            source_id="s1",
+            source_name=(
+                "An%20Integrated%20Approach%20to%20Software%20Engineering%2C%20"
+                "3rd%20ed_%20--%20Pankaj%20Jalote.pdf"
+            ),
+            unit_label="p.",
+            unit_start=210,
+            unit_end=211,
+            display="An%20Integrated%20Approach pp. 210–211",
+        )
+
+        text = task_text(
+            language="es",
+            section_title="4.6.1 The ATAM Analysis Method",
+            refs=[ref],
+            exam_scope=True,
+            part=1,
+            parts=1,
+        )
+
+        self.assertIn("pp. 210–211", text)
+        self.assertIn("ATAM", text)
+        self.assertNotIn("%20", text)
+        self.assertNotIn("An%20Integrated", text)
+
+    def test_task_text_adds_a_short_source_label_for_multiple_sources(self) -> None:
+        ref = SourceRef(
+            source_id="s1",
+            source_name="long-name.pdf",
+            unit_label="slide",
+            unit_start=3,
+            unit_end=4,
+            display="long-name.pdf slides 3–4",
+        )
+
+        text = task_text(
+            language="en",
+            section_title="Connectors",
+            refs=[ref],
+            exam_scope=True,
+            part=1,
+            parts=1,
+            source_label="An Integrated Approach to Software Engineering",
+        )
+
+        self.assertIn("slides 3–4", text)
+        self.assertIn("An Integrated Approach", text)
+        self.assertNotIn("long-name.pdf", text)
 
 
 class EstimatorTest(unittest.TestCase):
@@ -441,6 +588,90 @@ class PipelineTest(unittest.TestCase):
             )
             self.assertIsNotNone(store.load_result(run_id))
             self.assertTrue(summary.sources[0].chapter_count >= 2)
+
+    def test_restricted_scope_keeps_only_matching_chapter_and_section(self) -> None:
+        source_text = (
+            "# Chapter 1. Introduction\n\n"
+            + (
+                "Software engineering covers processes, methods, and tools. "
+            )
+            * 12
+            + "\n\n# Chapter 2. Software Architecture\n\n"
+            + "Architecture describes the structure of a software system. "
+            * 12
+            + "\n\n## 2.1 Architecture Views\n\n"
+            + "Views separate structure into components and connectors. "
+            * 12
+            + "\n\n## 2.2 Evaluating Architectures\n\n"
+            + "Architecture evaluation identifies risks and tradeoffs. "
+            * 12
+            + "\n\n### 2.2.1 The ATAM Analysis Method\n\n"
+            + "ATAM is the Architecture Tradeoff Analysis Method. "
+            * 20
+            + "\n\n## 2.3 Summary\n\n"
+            + "The chapter summarized architecture and evaluation. "
+            * 12
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = RunStore(root)
+            run_id = "sp123456789abd"
+            store.ensure_run(run_id)
+            store.save_source_bytes(run_id, "s1.md", source_text.encode("utf-8"))
+            store.save_rough_notes(run_id, "Entra únicamente el método ATAM")
+            now = utc_now()
+            summary = RunSummary(
+                id=run_id,
+                title="Architecture",
+                created_at=now,
+                updated_at=now,
+                options=RunOptions(language="auto"),
+                sources=[
+                    SourceSummary(
+                        id="s1",
+                        filename="long%20encoded%20architecture%20book.md",
+                        kind="md",
+                    )
+                ],
+            )
+            store.save_summary(summary)
+
+            async def on_change() -> None:
+                store.save_summary(summary)
+
+            provider = FakeProvider()
+            result = asyncio.run(
+                StudyPrepPipeline(
+                    store=store,
+                    provider=provider,
+                    summary=summary,
+                    on_change=on_change,
+                ).run()
+            )
+
+        self.assertIn(
+            "EXAM SCOPE FOCUS FROM ROUGH NOTES: ATAM",
+            provider.last_outline_prompt,
+        )
+        self.assertEqual(provider.section_calls, 1)
+        self.assertEqual(len(result.notes.sections), 1)
+        self.assertEqual(
+            result.notes.sections[0].chapter_title,
+            "Chapter 2. Software Architecture",
+        )
+        self.assertEqual(
+            result.notes.sections[0].title, "2.2.1 The ATAM Analysis Method"
+        )
+        self.assertEqual(len(result.plan.subjects), 1)
+        self.assertEqual(
+            result.plan.subjects[0].chapter_title,
+            "Chapter 2. Software Architecture",
+        )
+        self.assertEqual(len(result.plan.subjects[0].items), 1)
+        item = result.plan.subjects[0].items[0]
+        self.assertIn("ATAM", item.text)
+        self.assertIn("section 5", item.text)
+        self.assertNotIn("%20", item.text)
 
 
 class StudyPrepApiTest(unittest.TestCase):

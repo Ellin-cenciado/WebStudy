@@ -66,6 +66,34 @@ def scale_minutes(minutes: list[int], target_minutes: int | None) -> tuple[list[
     return scaled, None
 
 
+def _ref_location(ref: SourceRef) -> str:
+    start = ref.unit_start
+    end = ref.unit_end
+    label = (ref.unit_label or "").strip()
+    if label.startswith("p"):
+        return f"p. {start}" if start == end else f"pp. {start}–{end}"
+    if label.startswith("slide"):
+        return (
+            f"slide {start}"
+            if start == end
+            else f"slides {start}–{end}"
+        )
+    if label.startswith("section"):
+        return (
+            f"section {start}"
+            if start == end
+            else f"sections {start}–{end}"
+        )
+    return f"{label} {start}" if start == end else f"{label} {start}–{end}"
+
+
+def _short_label(value: str) -> str:
+    cleaned = " ".join(value.replace("_", " ").split())
+    if len(cleaned) > 48:
+        return cleaned[:45].rstrip() + "…"
+    return cleaned
+
+
 def task_text(
     *,
     language: str,
@@ -74,9 +102,13 @@ def task_text(
     exam_scope: bool,
     part: int,
     parts: int,
+    source_label: str = "",
 ) -> str:
     title = create_placeholder(section_title)
-    displays = [ref.display for ref in refs[:2]]
+    displays = [_ref_location(ref) for ref in refs[:2]]
+    if source_label and displays:
+        short = _short_label(source_label)
+        displays = [f"{short} — {location}" for location in displays]
     if language == "es":
         if displays:
             body = f"Estudiar «{title}»: leer {', '.join(displays)} y resumir los puntos clave"

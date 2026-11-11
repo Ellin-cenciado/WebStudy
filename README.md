@@ -150,6 +150,12 @@ The adapter retries once with reasoning disabled when a reply contains
 reasoning but no content; if the provider rejects the parameter, it retries
 without it and reports a clear error instead.
 
+Set `WEBSTUDY_LLM_CONTEXT_TOKENS` to the model's real context window. Ollama
+defaults to 4096 tokens unless the server is started with a larger
+`OLLAMA_CONTEXT_LENGTH`; on a 4096-token window, use
+`WEBSTUDY_LLM_MAX_OUTPUT_TOKENS=1500` so the outline prompt and response both
+fit. Otherwise the reply can be cut off mid-JSON.
+
 Local Ollama example:
 
 ```bash

@@ -4,7 +4,13 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type ScrollViewInstance,
+} from 'react-native';
 import {
   errorCodes,
   isErrorWithCode,
@@ -250,6 +256,8 @@ export function StudyPrepScreen({
   const [resultError, setResultError] = useState<string | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
   const [tab, setTab] = useState<'notes' | 'plan'>('notes');
+  const screenRef = useRef<ScrollViewInstance | null>(null);
+  const selectedCardY = useRef(0);
 
   const [notes, setNotes] = useState('');
   const [language, setLanguage] = useState<StudyPrepLanguage>('auto');
@@ -786,6 +794,16 @@ export function StudyPrepScreen({
     }
   };
 
+  const jumpToPlan = useCallback(() => {
+    setTab('plan');
+    setTimeout(() => {
+      screenRef.current?.scrollTo({
+        y: Math.max(0, selectedCardY.current - 12),
+        animated: true,
+      });
+    }, 60);
+  }, []);
+
   if (!serverLoaded) {
     return (
       <Screen>
@@ -806,9 +824,36 @@ export function StudyPrepScreen({
     selectedRun !== null && importedRuns.has(selectedRun.id);
   const active =
     selectedRun?.status === 'queued' || selectedRun?.status === 'running';
+  const jumpButton =
+    result !== null &&
+    selectedRun?.status === 'ready' &&
+    tab === 'notes' ? (
+      <Pressable
+        accessibilityLabel="Jump to the study plan"
+        accessibilityRole="button"
+        onPress={jumpToPlan}
+        style={({ pressed }) => [
+          styles.jumpToPlan,
+          {
+            backgroundColor: colors.accent,
+            shadowColor: colors.shadow,
+            opacity: pressed ? 0.82 : 1,
+          },
+        ]}>
+        <Text style={[styles.jumpToPlanText, { color: colors.accentText }]}>
+          Jump to plan
+        </Text>
+        <Text style={[styles.jumpToPlanGlyph, { color: colors.accentText }]}>
+          ↓
+        </Text>
+      </Pressable>
+    ) : null;
 
   return (
-    <Screen>
+    <Screen
+      ref={screenRef}
+      contentContainerStyle={jumpButton ? styles.withJumpButton : undefined}
+      floating={jumpButton}>
       <PageHeader
         subtitle="Generate polished notes and a deterministic study plan from your material."
         title="Study Prep"
@@ -1031,7 +1076,11 @@ export function StudyPrepScreen({
       ) : null}
 
       {selectedRun !== null ? (
-        <Card style={styles.section}>
+        <Card
+          onLayout={event => {
+            selectedCardY.current = event.nativeEvent.layout.y;
+          }}
+          style={styles.section}>
           <SectionTitle
             right={<RunStatus run={selectedRun} />}
             subtitle={`${formatDateTime(selectedRun.created_at)} · ${
@@ -1362,6 +1411,24 @@ export function StudyPrepScreen({
 }
 
 const styles = StyleSheet.create({
+  withJumpButton: { paddingBottom: 96 },
+  jumpToPlan: {
+    position: 'absolute',
+    right: 16,
+    bottom: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 17,
+    paddingVertical: 12,
+    borderRadius: 999,
+    elevation: 6,
+    shadowOpacity: 0.28,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  jumpToPlanText: { fontSize: 13, fontWeight: '800' },
+  jumpToPlanGlyph: { fontSize: 16, fontWeight: '800', lineHeight: 18 },
   section: { padding: 16, gap: 12 },
   sectionBody: { gap: 12 },
   loadingCard: {

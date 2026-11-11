@@ -234,33 +234,225 @@ def unit_phrase(unit_label: str, count: int) -> str:
     return f"{count} {unit_label}"
 
 
-def source_catalog(sources: list[ExtractedSource], *, max_chars: int = 12_000) -> str:
+_SCOPE_RESTRICTION_RE = re.compile(
+    r"\b(solamente|solo|sólo|unicamente|únicamente|exclusivamente|"
+    r"nada\s+m[áa]s|only|exclusively)\b",
+    re.IGNORECASE,
+)
+
+_SCOPE_NOISE = _STOPWORDS | {
+    # Spanish instruction words
+    "entra",
+    "entran",
+    "entrar",
+    "solamente",
+    "solo",
+    "sólo",
+    "unicamente",
+    "únicamente",
+    "exclusivamente",
+    "metodo",
+    "método",
+    "metodos",
+    "métodos",
+    "tema",
+    "temas",
+    "capitulo",
+    "capítulo",
+    "capitulos",
+    "capítulos",
+    "unidad",
+    "unidades",
+    "examen",
+    "examenes",
+    "exámenes",
+    "parcial",
+    "prueba",
+    "materia",
+    "curso",
+    "incluye",
+    "incluyen",
+    "incluir",
+    "incluya",
+    "cubre",
+    "cubren",
+    "cubrir",
+    "estudiar",
+    "estudia",
+    "repasar",
+    "contenido",
+    "contenidos",
+    "parte",
+    "partes",
+    "todo",
+    "toda",
+    "todos",
+    "todas",
+    "nada",
+    "mas",
+    "más",
+    # English instruction words
+    "only",
+    "just",
+    "exclusively",
+    "exam",
+    "exams",
+    "test",
+    "midterm",
+    "final",
+    "chapter",
+    "chapters",
+    "unit",
+    "units",
+    "topic",
+    "topics",
+    "method",
+    "methods",
+    "include",
+    "includes",
+    "cover",
+    "covers",
+    "study",
+    "content",
+    "contents",
+    "all",
+    "everything",
+    "nothing",
+    "except",
+    "about",
+    "from",
+}
+
+
+@dataclass(frozen=True)
+class ScopeFocus:
+    """Exam focus extracted from the rough notes.
+
+    ``restricted`` is true when the notes explicitly limit the exam to a set
+    of topics (for example "solamente entra ATAM"). ``terms`` are the
+    meaningful words left after removing the scope instruction itself.
+    """
+
+    restricted: bool
+    terms: tuple[str, ...]
+
+    @property
+    def active(self) -> bool:
+        return self.restricted and bool(self.terms)
+
+
+def _fold_text(value: str) -> str:
+    folded = unicodedata.normalize("NFKD", value.lower())
+    return "".join(char for char in folded if not unicodedata.combining(char))
+
+
+def scope_focus(text: str) -> ScopeFocus:
+    folded = _fold_text(text)
+    restricted = bool(_SCOPE_RESTRICTION_RE.search(folded))
+    if re.search(
+        r"\b(no|not)\s+(solo|sólo|solamente|unicamente|únicamente|only|just)\b",
+        folded,
+    ):
+        # "no solo ATAM" / "not only ATAM" means the exam includes more.
+        restricted = False
+    if not restricted:
+        return ScopeFocus(restricted=False, terms=())
+    terms: list[str] = []
+    for token in re.findall(r"[a-z0-9]{3,}", folded):
+        if token in _SCOPE_NOISE or token in terms:
+            continue
+        terms.append(token)
+    return ScopeFocus(restricted=True, terms=tuple(terms[:8]))
+
+
+def text_matches_focus(text: str, terms: tuple[str, ...] | list[str]) -> bool:
+    if not text or not terms:
+        return False
+    tokens = set(re.findall(r"[a-z0-9]+", _fold_text(text)))
+    for term in terms:
+        if term in tokens:
+            return True
+        if len(term) >= 5 and any(token.startswith(term) for token in tokens):
+            return True
+    return False
+
+
+def source_catalog(
+    sources: list[ExtractedSource],
+    *,
+    max_chars: int = 12_000,
+    focus: str = "",
+) -> str:
+    focus_info = scope_focus(focus)
+    terms = focus_info.terms
     lines: list[str] = []
-    for source in sources:
+    if terms:
         lines.append(
-            f"SOURCE {source.id} | {source.filename} | {source.kind} | "
+            "EXAM FOCUS FROM ROUGH NOTES: " + ", ".join(term.upper() for term in terms)
+        )
+        lines.append(
+            "The rough notes restrict the exam scope. Only chapters and headings "
+            "that cover this focus belong in the outline. Matching entries are "
+            "marked * and listed first."
+        )
+    for source in sources:
+        label = source.title.strip() or source.filename
+        lines.append(
+            f"SOURCE {source.id} | {label[:180]} | {source.kind} | "
             f"{unit_phrase(source.unit_label, source.unit_count)} | "
             f"{len(source.chapters)} chapters"
         )
+        chapter_blocks: list[tuple[bool, list[str]]] = []
         for chapter in source.chapters:
-            lines.append(
-                f"  CHAPTER {chapter.id} | {chapter.title} | "
-                f"{source.unit_label} {chapter.unit_start}-{chapter.unit_end}"
-            )
             headings = [
                 heading
                 for heading in source.headings
                 if chapter.unit_start <= heading.unit <= chapter.unit_end
             ]
-            for heading in headings[:10]:
+            matches = {
+                id(heading): text_matches_focus(heading.title, terms)
+                for heading in headings
+            }
+            has_match = any(matches.values())
+            # Keep the catalog readable, but never drop a heading that matches
+            # the exam focus. This matters for a subsection near the end of a
+            # long chapter (for example 4.6.1 The ATAM Analysis Method).
+            shown = list(headings[:12])
+            for heading in headings[12:]:
+                if matches[id(heading)]:
+                    shown.append(heading)
+            shown.sort(key=lambda heading: heading.unit)
+            block: list[str] = [
+                f"  CHAPTER {chapter.id} | {chapter.title} | "
+                f"{source.unit_label} {chapter.unit_start}-{chapter.unit_end}"
+                + ("  *" if has_match else "")
+            ]
+            for heading in shown:
                 indent = "    " + "  " * min(heading.level, 3)
-                lines.append(
-                    f"{indent}- {heading.title} ({source.unit_label} {heading.unit})"
+                marker = "*" if matches[id(heading)] else "-"
+                block.append(
+                    f"{indent}{marker} {heading.title} "
+                    f"({source.unit_label} {heading.unit})"
                 )
-            if len(headings) > 10:
-                lines.append(
-                    f"    - … {len(headings) - 10} more headings in this chapter"
+            if len(headings) > len(shown):
+                block.append(
+                    f"    - … {len(headings) - len(shown)} more headings in this chapter"
                 )
+            chapter_blocks.append((has_match, block))
+        if terms:
+            chapter_blocks.sort(key=lambda item: not item[0])
+            if any(has_match for has_match, _block in chapter_blocks):
+                # With an explicit scope, omit unrelated chapters from the
+                # catalog entirely. This keeps the prompt small enough for
+                # providers with a 4k context and makes the model less likely
+                # to add chapters just because they exist in the source.
+                chapter_blocks = [
+                    (True, block)
+                    for has_match, block in chapter_blocks
+                    if has_match
+                ]
+        for _has_match, block in chapter_blocks:
+            lines.extend(block)
         if len("\n".join(lines)) >= max_chars:
             lines.append("… source catalog truncated …")
             break

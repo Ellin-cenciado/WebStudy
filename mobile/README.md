@@ -155,6 +155,8 @@ OpenAI-compatible provider), bound to all interfaces:
 export WEBSTUDY_LLM_MODEL=qwen3.8:27b
 export WEBSTUDY_LLM_BASE_URL=http://127.0.0.1:11434/v1
 export WEBSTUDY_LLM_REASONING_EFFORT=none
+export WEBSTUDY_LLM_CONTEXT_TOKENS=4096
+export WEBSTUDY_LLM_MAX_OUTPUT_TOKENS=1500
 .venv/bin/webstudy --host 0.0.0.0
 ```
 

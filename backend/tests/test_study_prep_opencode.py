@@ -318,6 +318,26 @@ class OpenCodeProviderTests(unittest.IsolatedAsyncioTestCase):
         decoded = base64.b64decode(authorization.split(" ", 1)[1]).decode()
         self.assertEqual(decoded, "opencode:discovered")
 
+    async def test_uses_latest_assistant_message_by_timestamp(self) -> None:
+        older = assistant_message('{"ok": false}')["data"][0]
+        older["time"]["created"] = 1
+        newer = assistant_message('{"ok": true}')["data"][0]
+        newer["time"]["created"] = 2
+        fake = FakeOpenCode(
+            message={
+                "data": [newer, older],
+                "cursor": {"previous": None, "next": None},
+            }
+        )
+        provider = OpenCodeAgentProvider(
+            config(), transport=httpx.MockTransport(fake.handler)
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            result = await provider.complete_json(
+                system="system", prompt="prompt", workspace=temp
+            )
+        self.assertEqual(result, {"ok": True})
+
     async def test_invalid_json_after_retry_raises(self) -> None:
         fake = FakeOpenCode(answers=["not json", "still not json"])
         provider = OpenCodeAgentProvider(

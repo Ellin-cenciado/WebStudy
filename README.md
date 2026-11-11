@@ -199,7 +199,11 @@ the Basic-auth password from `~/.config/opencode/service.json` unless
 `WEBSTUDY_OPENCODE_BASE_URL` and `WEBSTUDY_OPENCODE_PASSWORD` are set. Each run
 gets its own `.opencode/agents/study-prep.md` under the run directory. The agent
 is generated with read-only access to that directory and is denied shell, edit,
-web, and external-directory access.
+web, and external-directory access. Reads are workspace-relative (`**`), so
+absolute paths outside the run directory remain blocked by `external_directory`.
+
+When `WEBSTUDY_OPENCODE_LOCATION` points at a fixed workspace, an existing
+agent file is preserved; make sure that agent is read-only before using it.
 
 Each model call creates a fresh OpenCode session, waits for it to finish, reads
 the final assistant text, validates the JSON, and deletes the session. This

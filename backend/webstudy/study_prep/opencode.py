@@ -214,7 +214,12 @@ class OpenCodeAgentProvider:
         configured = workspace or self.config.opencode_location
         if configured:
             root = Path(configured).expanduser().resolve()
-            root.mkdir(parents=True, exist_ok=True)
+            try:
+                root.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise ProviderError(
+                    f"Could not create the OpenCode workspace: {exc}"
+                ) from exc
             temporary = False
         else:
             root = Path(tempfile.mkdtemp(prefix="webstudy-opencode-"))
@@ -351,6 +356,15 @@ def _session_id(created: dict | None) -> str:
     raise ProviderError("OpenCode returned an invalid session response.")
 
 
+def _message_created(message: dict) -> float:
+    time = message.get("time")
+    if isinstance(time, dict):
+        created = time.get("created")
+        if isinstance(created, (int, float)):
+            return float(created)
+    return 0.0
+
+
 def _assistant_text(body: dict | None) -> str:
     messages = body.get("data") if isinstance(body, dict) else None
     if not isinstance(messages, list):
@@ -360,6 +374,7 @@ def _assistant_text(body: dict | None) -> str:
         for message in messages
         if isinstance(message, dict) and message.get("type") == "assistant"
     ]
+    assistants.sort(key=_message_created)
     for message in reversed(assistants):
         error = message.get("error")
         if error:

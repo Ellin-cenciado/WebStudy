@@ -343,6 +343,28 @@ class ScopeCatalogTest(unittest.TestCase):
         self.assertNotIn("%20", text)
         self.assertNotIn("An%20Integrated", text)
 
+    def test_task_text_localizes_spanish_section_locations(self) -> None:
+        ref = SourceRef(
+            source_id="s1",
+            source_name="architecture.md",
+            unit_label="section",
+            unit_start=5,
+            unit_end=5,
+            display="architecture.md section 5",
+        )
+
+        text = task_text(
+            language="es",
+            section_title="2.2.1 The ATAM Analysis Method",
+            refs=[ref],
+            exam_scope=True,
+            part=1,
+            parts=1,
+        )
+
+        self.assertIn("sección 5", text)
+        self.assertNotIn("section 5", text)
+
     def test_task_text_adds_a_short_source_label_for_multiple_sources(self) -> None:
         ref = SourceRef(
             source_id="s1",
@@ -679,7 +701,7 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(len(result.plan.subjects[0].items), 1)
         item = result.plan.subjects[0].items[0]
         self.assertIn("ATAM", item.text)
-        self.assertIn("section 5", item.text)
+        self.assertIn("sección 5", item.text)
         self.assertNotIn("%20", item.text)
 
 

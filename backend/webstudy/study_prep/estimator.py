@@ -66,23 +66,33 @@ def scale_minutes(minutes: list[int], target_minutes: int | None) -> tuple[list[
     return scaled, None
 
 
-def _ref_location(ref: SourceRef) -> str:
+def _ref_location(ref: SourceRef, language: str) -> str:
     start = ref.unit_start
     end = ref.unit_end
     label = (ref.unit_label or "").strip()
     if label.startswith("p"):
         return f"p. {start}" if start == end else f"pp. {start}–{end}"
     if label.startswith("slide"):
+        singular, plural = (
+            ("diapositiva", "diapositivas")
+            if language == "es"
+            else ("slide", "slides")
+        )
         return (
-            f"slide {start}"
+            f"{singular} {start}"
             if start == end
-            else f"slides {start}–{end}"
+            else f"{plural} {start}–{end}"
         )
     if label.startswith("section"):
+        singular, plural = (
+            ("sección", "secciones")
+            if language == "es"
+            else ("section", "sections")
+        )
         return (
-            f"section {start}"
+            f"{singular} {start}"
             if start == end
-            else f"sections {start}–{end}"
+            else f"{plural} {start}–{end}"
         )
     return f"{label} {start}" if start == end else f"{label} {start}–{end}"
 
@@ -105,7 +115,7 @@ def task_text(
     source_label: str = "",
 ) -> str:
     title = create_placeholder(section_title)
-    displays = [_ref_location(ref) for ref in refs[:2]]
+    displays = [_ref_location(ref, language) for ref in refs[:2]]
     if source_label and displays:
         short = _short_label(source_label)
         displays = [f"{short} — {location}" for location in displays]

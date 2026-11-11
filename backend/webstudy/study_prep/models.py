@@ -212,6 +212,7 @@ class StudyPrepConfig(BaseModel):
     provider: str
     base_url: str
     model: str
+    agent: str = ""
     context_tokens: int
     max_output_tokens: int
     max_files: int = 10

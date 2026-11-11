@@ -35,9 +35,17 @@ class LLMConfig:
     timeout_seconds: int
     provider: str
     reasoning_effort: str = ""
+    opencode_base_url: str = ""
+    opencode_password: str = ""
+    opencode_agent: str = "study-prep"
+    opencode_model: str = ""
+    opencode_location: str = ""
+    opencode_timeout_seconds: int = 900
 
     @property
     def configured(self) -> bool:
+        if self.provider == "opencode":
+            return bool(self.opencode_agent.strip())
         return bool(self.model.strip())
 
     @classmethod
@@ -71,6 +79,17 @@ class LLMConfig:
             ),
             provider=provider,
             reasoning_effort=reasoning_effort,
+            opencode_base_url=os.environ.get("WEBSTUDY_OPENCODE_BASE_URL", "").strip(),
+            opencode_password=os.environ.get("WEBSTUDY_OPENCODE_PASSWORD", "").strip(),
+            opencode_agent=(
+                os.environ.get("WEBSTUDY_OPENCODE_AGENT", "study-prep").strip()
+                or "study-prep"
+            ),
+            opencode_model=os.environ.get("WEBSTUDY_OPENCODE_MODEL", "").strip(),
+            opencode_location=os.environ.get("WEBSTUDY_OPENCODE_LOCATION", "").strip(),
+            opencode_timeout_seconds=_int_env(
+                "WEBSTUDY_OPENCODE_TIMEOUT_SECONDS", 900
+            ),
         )
 
     @property
@@ -92,6 +111,7 @@ class LLMProvider(Protocol):
         prompt: str,
         max_tokens: int | None = None,
         temperature: float = 0.2,
+        workspace: str | None = None,
     ) -> dict:
         ...
 
@@ -113,6 +133,7 @@ class OpenAICompatibleProvider:
         prompt: str,
         max_tokens: int | None = None,
         temperature: float = 0.2,
+        workspace: str | None = None,
     ) -> dict:
         if not self.config.configured:
             raise ProviderError(
@@ -305,6 +326,10 @@ def provider_from_env() -> LLMProvider | None:
     config = LLMConfig.from_env()
     if not config.configured:
         return None
+    if config.provider == "opencode":
+        from .opencode import OpenCodeAgentProvider
+
+        return OpenCodeAgentProvider(config)
     return OpenAICompatibleProvider(config)
 
 

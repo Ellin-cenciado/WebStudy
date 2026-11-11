@@ -818,6 +818,11 @@ export function StudyPrepScreen({
   }
 
   const configured = config?.configured ?? false;
+  const providerLabel = config?.agent
+    ? `${config.provider} · ${config.agent}${
+        config.model ? ` · ${config.model}` : ''
+      }`
+    : `${config?.provider ?? ''} · ${config?.model ?? ''}`;
   const selectedRun =
     detail ?? runs.find(entry => entry.id === selectedId) ?? null;
   const imported =
@@ -954,9 +959,7 @@ export function StudyPrepScreen({
                   styles.providerTitle,
                   { color: configured ? colors.good : colors.warn },
                 ]}>
-                {configured
-                  ? `${config.provider} · ${config.model}`
-                  : 'No language model configured on the server'}
+                {configured ? providerLabel : 'No language model configured on the server'}
               </Text>
               <Text
                 style={[

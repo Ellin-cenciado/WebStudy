@@ -69,6 +69,7 @@ class FakeProvider:
         self.outline_calls = 0
         self.section_calls = 0
         self.last_outline_prompt = ""
+        self.workspaces: list[str | None] = []
 
     async def complete_json(
         self,
@@ -77,7 +78,9 @@ class FakeProvider:
         prompt: str,
         max_tokens: int | None = None,
         temperature: float = 0.2,
+        workspace: str | None = None,
     ) -> dict:
+        self.workspaces.append(workspace)
         if "Plan a study document" in prompt:
             self.outline_calls += 1
             self.last_outline_prompt = prompt
@@ -564,6 +567,12 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(summary.progress, 100)
             self.assertEqual(provider.outline_calls, 1)
             self.assertEqual(provider.section_calls, 2)
+            self.assertTrue(
+                all(
+                    workspace is not None and workspace.endswith(run_id)
+                    for workspace in provider.workspaces
+                )
+            )
             self.assertEqual(len(result.plan.subjects), 2)
             self.assertEqual(
                 [len(subject.items) for subject in result.plan.subjects], [1, 1]

@@ -166,6 +166,20 @@ settings are written to the app. The backend stores runs under
 `state_dir()/study-prep/<run_id>/`, including the raw uploads, extracted text,
 `notes.md`, `plan.json`, and `run.json`.
 
+To use an OpenCode agent instead, start OpenCode on the backend host and select
+it in the backend environment:
+
+```bash
+opencode service start
+export WEBSTUDY_LLM_PROVIDER=opencode
+export WEBSTUDY_OPENCODE_AGENT=study-prep
+export WEBSTUDY_OPENCODE_MODEL=opencode-go/deepseek-v4.1-flash
+.venv/bin/webstudy --host 0.0.0.0
+```
+
+The phone still connects only to `http://<computer>:8000`. It never contacts the
+OpenCode service, and the OpenCode password stays on the backend host.
+
 In the phone's Prep tab, enter the computer's LAN address (for example
 `http://192.168.0.20:8000`) and tap **Connect**. The address is kept in Android
 `SharedPreferences` under `studyPrepServer`. Cleartext HTTP is enabled for the

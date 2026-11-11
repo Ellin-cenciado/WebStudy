@@ -279,6 +279,7 @@ class StudyPrepPipeline:
             prompt=prompt,
             max_tokens=min(3_500, self.provider.config.max_output_tokens),
             temperature=0.2,
+            workspace=str(self.store.run_dir(self.summary.id)),
         )
         try:
             return OutlineResponse.model_validate(raw)
@@ -575,6 +576,7 @@ class StudyPrepPipeline:
                     prompt=prompt,
                     max_tokens=min(2_500, self.provider.config.max_output_tokens),
                     temperature=0.35,
+                    workspace=str(self.store.run_dir(self.summary.id)),
                 )
                 try:
                     draft = SectionDraft.model_validate(raw)

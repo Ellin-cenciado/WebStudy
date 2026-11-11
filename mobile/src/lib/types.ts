@@ -179,6 +179,7 @@ export interface StudyPrepConfig {
   provider: string;
   base_url: string;
   model: string;
+  agent: string;
   context_tokens: number;
   max_output_tokens: number;
   max_files: number;

@@ -134,14 +134,20 @@ are written to `config.toml`.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `WEBSTUDY_LLM_MODEL` | *(required)* | Model name, e.g. `llama3.1` or `gpt-4.1-mini` |
+| `WEBSTUDY_LLM_MODEL` | *(required for Ollama/OpenAI-compatible)* | Model name, e.g. `llama3.1` or `gpt-4.1-mini` |
 | `WEBSTUDY_LLM_BASE_URL` | `http://127.0.0.1:11434/v1` | OpenAI-compatible endpoint |
 | `WEBSTUDY_LLM_API_KEY` | empty | Bearer token for a remote provider |
-| `WEBSTUDY_LLM_PROVIDER` | inferred | `ollama` or `openai-compatible` (display only) |
+| `WEBSTUDY_LLM_PROVIDER` | inferred | `ollama`, `openai-compatible`, or `opencode` |
 | `WEBSTUDY_LLM_CONTEXT_TOKENS` | `16384` | Prompt budget for the adapter |
 | `WEBSTUDY_LLM_MAX_OUTPUT_TOKENS` | `2500` | Maximum generation per request |
 | `WEBSTUDY_LLM_REASONING_EFFORT` | empty | `none` disables thinking on supported models |
 | `WEBSTUDY_LLM_TIMEOUT_SECONDS` | `300` | Per-request timeout |
+| `WEBSTUDY_OPENCODE_BASE_URL` | auto-discover | OpenCode V2 service URL |
+| `WEBSTUDY_OPENCODE_PASSWORD` | `service.json` | OpenCode Basic-auth password |
+| `WEBSTUDY_OPENCODE_AGENT` | `study-prep` | Agent used for JSON generation |
+| `WEBSTUDY_OPENCODE_MODEL` | agent default | Optional `provider/model#variant` |
+| `WEBSTUDY_OPENCODE_LOCATION` | per-run | Optional fixed agent workspace |
+| `WEBSTUDY_OPENCODE_TIMEOUT_SECONDS` | `900` | Session wait timeout |
 
 Thinking models such as Qwen3.5 can spend the whole output budget on hidden
 reasoning, which produces an empty answer. On LM Studio, set
@@ -174,9 +180,35 @@ export WEBSTUDY_LLM_PROVIDER=openai-compatible
 .venv/bin/webstudy
 ```
 
-Without `WEBSTUDY_LLM_MODEL`, the page shows a configuration warning and run
-creation fails with `provider_not_configured`; retry works after the backend is
-restarted with a model configured.
+### Use an OpenCode agent
+
+Study Prep can use an OpenCode V2 agent as its generation backend. The backend
+host must be running the OpenCode background service; the phone and browser
+never contact OpenCode directly.
+
+```bash
+opencode service start
+export WEBSTUDY_LLM_PROVIDER=opencode
+export WEBSTUDY_OPENCODE_AGENT=study-prep
+export WEBSTUDY_OPENCODE_MODEL=opencode-go/deepseek-v4.1-flash
+.venv/bin/webstudy --host 0.0.0.0
+```
+
+The backend discovers the service URL with `opencode service status` and reads
+the Basic-auth password from `~/.config/opencode/service.json` unless
+`WEBSTUDY_OPENCODE_BASE_URL` and `WEBSTUDY_OPENCODE_PASSWORD` are set. Each run
+gets its own `.opencode/agents/study-prep.md` under the run directory. The agent
+is generated with read-only access to that directory and is denied shell, edit,
+web, and external-directory access.
+
+Each model call creates a fresh OpenCode session, waits for it to finish, reads
+the final assistant text, validates the JSON, and deletes the session. This
+keeps sections independent and avoids leaving sessions behind.
+
+Without a model name (or an OpenCode agent when `WEBSTUDY_LLM_PROVIDER=opencode`),
+the page shows a configuration warning and run creation fails with
+`provider_not_configured`; retry works after the backend is restarted with a
+provider configured.
 
 ### Inputs and limits
 

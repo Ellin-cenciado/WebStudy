@@ -48,8 +48,13 @@ async def study_prep_config(request: Request) -> StudyPrepConfig:
     return StudyPrepConfig(
         configured=config.configured,
         provider=config.provider,
-        base_url=config.base_url,
-        model=config.model,
+        base_url=(
+            (config.opencode_base_url or "auto-discover")
+            if config.provider == "opencode"
+            else config.base_url
+        ),
+        model=config.opencode_model or config.model,
+        agent=config.opencode_agent if config.provider == "opencode" else "",
         context_tokens=config.context_tokens,
         max_output_tokens=config.max_output_tokens,
         max_files=manager.max_files,

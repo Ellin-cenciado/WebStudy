@@ -329,9 +329,17 @@ export function StudyPrepPage() {
         <p className="text-xs text-slate-400 dark:text-slate-500">
           Using{" "}
           <span className="font-semibold text-slate-500 dark:text-slate-400">
-            {config.provider === "ollama" ? "Ollama" : "OpenAI-compatible"}
+            {config.provider === "opencode"
+              ? "OpenCode"
+              : config.provider === "ollama"
+                ? "Ollama"
+                : "OpenAI-compatible"}
           </span>{" "}
-          · {config.model} · {config.base_url}
+          ·{" "}
+          {config.agent
+            ? `${config.agent}${config.model ? ` · ${config.model}` : ""}`
+            : config.model}{" "}
+          · {config.base_url}
         </p>
       ) : null}
 

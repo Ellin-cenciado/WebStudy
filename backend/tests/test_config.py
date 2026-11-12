@@ -98,6 +98,48 @@ class ConfigParseTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             config_mod.TransparencyConfig(idle_timeout=-1)
 
+    def test_vacation_and_recovery_defaults(self):
+        cfg = config_mod.loads("")
+        self.assertFalse(cfg.vacation.enabled)
+        self.assertIsNone(cfg.vacation.start)
+        self.assertIsNone(cfg.vacation.end)
+        self.assertEqual(cfg.max_debt_seconds, 12 * SECONDS_PER_HOUR)
+        self.assertEqual(cfg.reset_cooldown_days, 30)
+
+    def test_parses_vacation_and_recovery(self):
+        cfg = config_mod.loads(
+            """
+            [vacation]
+            enabled = true
+            start = "2026-12-20"
+            end = "2027-01-05"
+
+            [recovery]
+            max_debt_hours = 6
+            reset_cooldown_days = 14
+            """
+        )
+        self.assertTrue(cfg.vacation.enabled)
+        self.assertEqual(cfg.vacation.start.isoformat(), "2026-12-20")
+        self.assertEqual(cfg.vacation.end.isoformat(), "2027-01-05")
+        self.assertEqual(cfg.max_debt_seconds, 6 * SECONDS_PER_HOUR)
+        self.assertEqual(cfg.reset_cooldown_days, 14)
+
+    def test_invalid_vacation_and_recovery_values_raise(self):
+        with self.assertRaises(ValueError):
+            config_mod.loads(
+                """
+                [vacation]
+                enabled = true
+                start = "2027-01-05"
+                end = "2026-12-20"
+                """
+            )
+        with self.assertRaises(ValueError):
+            config_mod.loads("[recovery]\nmax_debt_hours = -1\n")
+        with self.assertRaises(ValueError):
+            config_mod.loads("[recovery]\nreset_cooldown_days = 0\n")
+
 
 class ConfigRoundTripTest(unittest.TestCase):
     def test_dumps_then_loads(self):

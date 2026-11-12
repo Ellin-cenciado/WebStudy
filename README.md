@@ -11,6 +11,10 @@ checklist, and history rules; React only renders state and sends commands.
 
 - Carries unmet required hours into the next day.
 - Supports three weekday policies: **carried**, **optional**, and **free**.
+- Supports **vacation mode** date ranges: no quota and no new debt while away,
+  with existing debt preserved.
+- Bounds accumulated debt with a configurable **debt ceiling** and provides a
+  cooldown-limited **forgive carried debt** recovery action.
 - Runs pomodoro study/break phases; breaks count toward the daily goal.
 - Tracks checklist subjects and items with per-item timers, surplus carry, debt,
   and a five-minute rest after a subject is completed.
@@ -389,6 +393,7 @@ Then open <http://127.0.0.1:8000>.
 - `POST /api/checklist/import` — atomic bulk subject/item import
 - `GET /api/config`, `PUT /api/config`
 - `GET /api/stats?days=30`
+- `GET /api/recovery`, `POST /api/recovery/reset`
 - `POST /api/session/start`, `/pause`, `/skip-phase`
 - Subject/item CRUD plus `/select`, `/reset`, `/uncheck-last`
 - `POST /api/items/{id}/check`
@@ -406,6 +411,11 @@ Then open <http://127.0.0.1:8000>.
   service and local notifications while a session is running; Android 13+
   requires notification permission for the notification and lock-screen
   controls.
+- Vacation mode applies to logical days. It prevents new debt but does not
+  rewrite already-settled days or forgive existing debt; use the recovery reset
+  for that. The debt ceiling is 12 hours by default and can be disabled by
+  setting it to 0. The reset cooldown defaults to 30 days and is enforced by
+  the backend.
 - Study Prep requires a reachable Ollama or OpenAI-compatible provider. The
   Android Prep tab also requires the WebStudy backend to be running and
   reachable over the LAN; generation is not performed on the phone.

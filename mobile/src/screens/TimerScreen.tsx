@@ -20,9 +20,17 @@ import {
   titleCase,
 } from '../lib/format';
 
-function phaseLabel(phase: string, freeDay: boolean, complete: boolean): string {
+function phaseLabel(
+  phase: string,
+  freeDay: boolean,
+  complete: boolean,
+  vacation = false,
+): string {
   if (complete) {
     return 'Day complete';
+  }
+  if (vacation) {
+    return 'Vacation';
   }
   if (freeDay) {
     return 'Free day';
@@ -78,6 +86,7 @@ export function TimerScreen() {
 
   const complete = snapshot.day_complete;
   const freeDay = snapshot.is_free_day;
+  const vacation = snapshot.is_vacation;
   const running = snapshot.running;
   const canControl = connected && !complete && !freeDay;
   const phaseLength = snapshot.phase_length_seconds;
@@ -88,21 +97,25 @@ export function TimerScreen() {
 
   const primaryLabel = complete
     ? 'Done'
-    : freeDay
-      ? 'Free day'
-      : running
-        ? 'Pause'
-        : snapshot.phase === 'complete'
-          ? 'Done'
-          : 'Start';
+    : vacation
+      ? 'Vacation'
+      : freeDay
+        ? 'Free day'
+        : running
+          ? 'Pause'
+          : snapshot.phase === 'complete'
+            ? 'Done'
+            : 'Start';
 
   const heading = complete
     ? 'You did it.'
-    : freeDay
-      ? 'Take the day off.'
-      : running
-        ? 'Stay with it.'
-        : 'Ready when you are.';
+    : vacation
+      ? 'Vacation mode.'
+      : freeDay
+        ? 'Take the day off.'
+        : running
+          ? 'Stay with it.'
+          : 'Ready when you are.';
 
   const onPrimary = async () => {
     if (!running) {
@@ -191,7 +204,7 @@ export function TimerScreen() {
       <Card style={styles.timerCard}>
         <View style={styles.timerTop}>
           <Badge
-            label={phaseLabel(snapshot.phase, freeDay, complete)}
+            label={phaseLabel(snapshot.phase, freeDay, complete, vacation)}
             tone={phaseTone(complete, freeDay, snapshot.phase)}
           />
           <Text style={[styles.updated, { color: colors.textFaint }]}>
@@ -204,7 +217,7 @@ export function TimerScreen() {
             <Text style={[styles.timer, { color: colors.text }]}>{countdown}</Text>
           ) : (
             <Text style={[styles.ready, { color: colors.text }]}>
-              {complete ? 'Done' : freeDay ? 'Rest' : 'Ready'}
+              {complete ? 'Done' : vacation ? 'Off' : freeDay ? 'Rest' : 'Ready'}
             </Text>
           )}
 
@@ -304,11 +317,13 @@ export function TimerScreen() {
             {titleCase(snapshot.day_kind)}
           </Text>
           <Text style={[styles.infoHint, { color: colors.textMuted }]}>
-            {snapshot.is_free_day
-              ? 'No requirement. Debt is preserved.'
-              : snapshot.day_kind === 'optional'
-                ? 'Goal only. Unmet time is discarded.'
-                : "Unmet time becomes tomorrow's debt."}
+            {vacation
+              ? 'No requirement. Existing debt is preserved.'
+              : snapshot.is_free_day
+                ? 'No requirement. Debt is preserved.'
+                : snapshot.day_kind === 'optional'
+                  ? 'Goal only. Unmet time is discarded.'
+                  : "Unmet time becomes tomorrow's debt."}
           </Text>
         </Card>
 

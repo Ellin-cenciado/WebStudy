@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import date, timedelta
 from pathlib import Path
 
 from .core.checklist import (
@@ -49,6 +50,35 @@ class ChecklistSummary:
     revision: int = 0
 
 
+@dataclass(frozen=True)
+class RecoveryStatus:
+    """The current debt-forgiveness availability."""
+
+    debt_seconds: int
+    cooldown_days: int
+    last_reset_on: date | None
+    next_reset_on: date | None
+    can_reset: bool
+
+
+@dataclass(frozen=True)
+class ResetOutcome:
+    """Result of a successful debt reset."""
+
+    forgiven_seconds: int
+    next_reset_on: date
+
+
+class RecoveryCooldownError(ValueError):
+    """Raised when a debt reset is still inside its cooldown window."""
+
+    def __init__(self, next_reset_on: date) -> None:
+        self.next_reset_on = next_reset_on
+        super().__init__(
+            f"Next debt reset available on {next_reset_on.isoformat()}"
+        )
+
+
 class StudyService:
     def __init__(
         self,
@@ -77,8 +107,14 @@ class StudyService:
         self._checklist_revision = 0
         self._resting = False
         self._rest_subject_id: str | None = None
+        self._pending_events: list[Event] = []
 
         self._build_tracker()
+        self._pending_events.extend(self._debt_cap_events(self.tracker.last_settled))
+        if self.tracker.startup_debt_forgiven:
+            self._pending_events.append(
+                self._debt_cap_event(self.tracker.startup_debt_forgiven)
+            )
         self._build_checklist()
         # Record any days that were settled while the daemon was not running.
         self._record_settled(self.tracker.last_settled)
@@ -98,6 +134,8 @@ class StudyService:
             ),
             boundary=self.config.boundary,
             state=saved,
+            vacation=self.config.vacation,
+            max_debt_seconds=self.config.max_debt_seconds,
         )
         if self.persist:
             self._ensure_history()
@@ -389,6 +427,58 @@ class StudyService:
         self._record_current()
         self._persist(force=True)
 
+    def recovery(self) -> RecoveryStatus:
+        """Current debt and whether a reset is available."""
+        cooldown = self.config.reset_cooldown_days
+        today = self.tracker.state.logical_day
+        last = self.tracker.state.last_reset_day
+        next_reset = last + timedelta(days=cooldown) if last is not None else None
+        cooldown_ready = next_reset is None or today >= next_reset
+        return RecoveryStatus(
+            debt_seconds=self.tracker.state.debt_seconds,
+            cooldown_days=cooldown,
+            last_reset_on=last,
+            next_reset_on=next_reset if cooldown_ready is False else None,
+            can_reset=cooldown_ready and self.tracker.state.debt_seconds > 0,
+        )
+
+    def reset_debt(self) -> ResetOutcome:
+        """Forgive all currently carried debt and start the cooldown."""
+        self._accrue_checklist()
+        settled = self.tracker.sync()
+        if settled:
+            self._pending_events.extend(self._record_and_events(settled))
+
+        status = self.recovery()
+        if not status.can_reset:
+            if status.next_reset_on is not None:
+                raise RecoveryCooldownError(status.next_reset_on)
+            raise ValueError("There is no carried debt to reset.")
+
+        forgiven = status.debt_seconds
+        today = self.tracker.state.logical_day
+        self.tracker.state.debt_seconds = 0
+        self.tracker.state.last_reset_day = today
+        next_reset = today + timedelta(days=self.config.reset_cooldown_days)
+
+        self._record_current()
+        self._persist(force=True)
+        self._was_complete = self.tracker.day_complete
+        self._pending_events.append(
+            Event(
+                kind="debt_reset",
+                summary="Carried debt forgiven",
+                body=(
+                    f"{format_hours(forgiven)} cleared. "
+                    f"Next reset available on {next_reset.isoformat()}."
+                ),
+            )
+        )
+        return ResetOutcome(
+            forgiven_seconds=forgiven,
+            next_reset_on=next_reset,
+        )
+
     def reload_config(self, config: Config) -> None:
         """Apply a new configuration.
 
@@ -403,7 +493,16 @@ class StudyService:
             break_seconds=config.break_seconds,
         )
         self.tracker.boundary = config.boundary
-        self.tracker.sync()
+        self.tracker.vacation = config.vacation
+        self.tracker.max_debt_seconds = config.max_debt_seconds
+        forgiven = self.tracker.cap_debt()
+        settled = self.tracker.sync()
+        if self.tracker.is_vacation and self.tracker.state.running:
+            self.tracker.pause()
+        if forgiven:
+            self._pending_events.append(self._debt_cap_event(forgiven))
+        if settled:
+            self._pending_events.extend(self._record_and_events(settled))
         self._record_current()
         self._persist(force=True)
 
@@ -420,13 +519,11 @@ class StudyService:
         transitions, advance_result = self._accrue_checklist()
         settled = self.tracker.sync()
 
-        events: list[Event] = []
+        events: list[Event] = self._take_pending_events()
         if advance_result is not None and advance_result.expired:
             events.append(self._item_expired_event(advance_result.item_id))
         if settled:
-            self._record_settled(settled)
-            for day in settled:
-                events.append(self._day_rolled_event(day))
+            events.extend(self._record_and_events(settled))
 
         rest_finished = False
         if self._resting and (
@@ -519,6 +616,43 @@ class StudyService:
                 study_seconds=day.study_seconds,
                 break_seconds=day.break_seconds,
             )
+
+    def _record_and_events(self, settled: list[SettledDay]) -> list[Event]:
+        """Record settled days and build their cap/day-roll events."""
+        self._record_settled(settled)
+        events: list[Event] = []
+        for day in settled:
+            if day.result.debt_forgiven > 0:
+                events.append(self._debt_cap_event(day.result.debt_forgiven))
+            events.append(self._day_rolled_event(day))
+        return events
+
+    def _debt_cap_event(self, forgiven: int) -> Event:
+        cap = format_hours(self.tracker.max_debt_seconds)
+        return Event(
+            kind="debt_capped",
+            summary="Debt capped",
+            body=(
+                f"{format_hours(forgiven)} of carried debt was forgiven "
+                f"to keep it at {cap}."
+            ),
+        )
+
+    def _debt_cap_events(self, settled: list[SettledDay]) -> list[Event]:
+        return [
+            self._debt_cap_event(day.result.debt_forgiven)
+            for day in settled
+            if day.result.debt_forgiven > 0
+        ]
+
+    def _take_pending_events(self) -> list[Event]:
+        events = self._pending_events
+        self._pending_events = []
+        return events
+
+    def take_pending_events(self) -> list[Event]:
+        """Drain events queued by a user action outside the normal tick."""
+        return self._take_pending_events()
 
     def _upsert(
         self,

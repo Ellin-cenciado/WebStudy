@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   Badge,
   Button,
@@ -18,12 +18,14 @@ import { useConfig } from '../context/ConfigContext';
 import { useLive } from '../context/LiveContext';
 import { useTheme, type ThemePreference } from '../context/ThemeContext';
 import { useToast } from '../context/ToastContext';
-import { errorMessage, titleCase } from '../lib/format';
+import { api } from '../lib/api';
+import { errorMessage, formatDate, formatHours, titleCase } from '../lib/format';
 import {
   DAY_MODES,
   WEEKDAYS,
   type Config,
   type DayMode,
+  type Recovery,
   type WeekdayName,
 } from '../lib/types';
 
@@ -100,15 +102,34 @@ export function SettingsScreen() {
   const { config, loading, error, refresh, save } = useConfig();
   const { colors, preference, setPreference } = useTheme();
   const { push } = useToast();
-  const { notificationPermission, requestNotificationPermission } = useLive();
+  const {
+    state,
+    applyPayload,
+    notificationPermission,
+    requestNotificationPermission,
+  } = useLive();
   const [draft, setDraft] = useState<Config | null>(null);
   const [pending, setPending] = useState(false);
+  const [recovery, setRecovery] = useState<Recovery | null>(null);
+  const [resetPending, setResetPending] = useState(false);
 
   useEffect(() => {
     if (config !== null) {
       setDraft(cloneConfig(config));
     }
   }, [config]);
+
+  const refreshRecovery = useCallback(async () => {
+    try {
+      setRecovery(await api.recovery());
+    } catch {
+      // Recovery details are optional; settings still work without them.
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshRecovery();
+  }, [refreshRecovery]);
 
   const dirty = useMemo(
     () =>
@@ -151,6 +172,17 @@ export function SettingsScreen() {
     updateDay(day, { mode, quota_minutes: quota });
   };
 
+  const updateVacation = (update: Partial<Config['vacation']>) => {
+    setDraft(current =>
+      current === null
+        ? current
+        : { ...current, vacation: { ...current.vacation, ...update } },
+    );
+  };
+
+  const debtSeconds =
+    state?.snapshot.debt_seconds ?? recovery?.debt_seconds ?? 0;
+
   const submit = async () => {
     if (draft === null || !dirty) {
       return;
@@ -171,9 +203,31 @@ export function SettingsScreen() {
       });
       return;
     }
+    if (
+      draft.vacation.enabled &&
+      draft.vacation.start !== null &&
+      draft.vacation.end !== null &&
+      draft.vacation.start > draft.vacation.end
+    ) {
+      push({
+        kind: 'error',
+        title: 'Invalid vacation range',
+        body: 'The vacation end date must be on or after the start date.',
+      });
+      return;
+    }
+    if (draft.reset_cooldown_days < 1) {
+      push({
+        kind: 'error',
+        title: 'Invalid reset cooldown',
+        body: 'The reset cooldown must be at least one day.',
+      });
+      return;
+    }
     setPending(true);
     try {
       await save({ ...draft, boundary: draft.boundary.trim() });
+      await refreshRecovery();
       push({ kind: 'success', title: 'Settings saved' });
     } catch (caught) {
       push({
@@ -184,6 +238,46 @@ export function SettingsScreen() {
     } finally {
       setPending(false);
     }
+  };
+
+  const resetDebt = async () => {
+    if (debtSeconds <= 0 || recovery === null || !recovery.can_reset) {
+      return;
+    }
+    setResetPending(true);
+    try {
+      const result = await api.resetDebt();
+      applyPayload(result);
+      setRecovery(result.recovery);
+    } catch (caught) {
+      push({
+        kind: 'error',
+        title: 'Could not reset debt',
+        body: errorMessage(caught),
+      });
+    } finally {
+      setResetPending(false);
+    }
+  };
+
+  const confirmReset = () => {
+    if (debtSeconds <= 0 || recovery === null || !recovery.can_reset) {
+      return;
+    }
+    Alert.alert(
+      'Forgive carried debt?',
+      `This clears ${formatHours(debtSeconds)} of carried debt. Study time, history, and checklist progress are kept. The cooldown is ${
+        recovery.cooldown_days
+      } days.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Forgive',
+          style: 'destructive',
+          onPress: () => void resetDebt(),
+        },
+      ],
+    );
   };
 
   if (loading && config === null) {
@@ -322,6 +416,51 @@ export function SettingsScreen() {
       </SettingsSection>
 
       <SettingsSection
+        subtitle="No quota and no new debt while you are away. Existing debt is preserved."
+        title="Vacation">
+        <ToggleRow
+          description="Vacation days are treated like free days."
+          label="Enable vacation mode"
+          onValueChange={value => updateVacation({ enabled: value })}
+          value={draft.vacation.enabled}
+        />
+        {draft.vacation.enabled ? (
+          <View style={styles.inlineFields}>
+            <Field
+              hint="Leave blank to start immediately."
+              label="Starts">
+              <ThemedInput
+                autoCapitalize="none"
+                onChangeText={value =>
+                  updateVacation({ start: value.trim() || null })
+                }
+                placeholder="YYYY-MM-DD"
+                style={styles.dateInput}
+                value={draft.vacation.start ?? ''}
+              />
+            </Field>
+            <Field
+              hint="Leave blank to stay on until turned off."
+              label="Ends">
+              <ThemedInput
+                autoCapitalize="none"
+                onChangeText={value =>
+                  updateVacation({ end: value.trim() || null })
+                }
+                placeholder="YYYY-MM-DD"
+                style={styles.dateInput}
+                value={draft.vacation.end ?? ''}
+              />
+            </Field>
+          </View>
+        ) : null}
+        <Text style={[styles.paragraph, { color: colors.textMuted }]}>
+          Past settled days are not rewritten. Use the recovery reset if you
+          want a fresh start after a long break.
+        </Text>
+      </SettingsSection>
+
+      <SettingsSection
         subtitle="Breaks count toward the daily session, by design."
         title="Pomodoro">
         <View style={styles.inlineFields}>
@@ -350,6 +489,83 @@ export function SettingsScreen() {
             </View>
           </Field>
         </View>
+      </SettingsSection>
+
+      <SettingsSection
+        subtitle="Bound accumulated debt and recover from a bad streak."
+        title="Recovery">
+        <View style={styles.recoveryDebtRow}>
+          <Text style={[styles.recoveryDebtLabel, { color: colors.textMuted }]}>
+            Carried debt
+          </Text>
+          <Text style={[styles.recoveryDebtValue, { color: colors.text }]}>
+            {formatHours(debtSeconds)}
+          </Text>
+        </View>
+        <View style={styles.inlineFields}>
+          <Field
+            hint="0 disables the ceiling. Lowering it below current debt forgives the excess when saved."
+            label="Maximum carried debt">
+            <View style={styles.numberRow}>
+              <NumberField
+                max={168}
+                min={0}
+                onCommit={value => patch({ max_debt_hours: value })}
+                style={styles.numberInput}
+                value={draft.max_debt_hours}
+              />
+              <Text style={[styles.unit, { color: colors.textMuted }]}>hours</Text>
+            </View>
+          </Field>
+          <Field
+            hint="Days between debt resets."
+            label="Reset cooldown">
+            <View style={styles.numberRow}>
+              <NumberField
+                max={365}
+                min={1}
+                onCommit={value => patch({ reset_cooldown_days: value })}
+                style={styles.numberInput}
+                value={draft.reset_cooldown_days}
+              />
+              <Text style={[styles.unit, { color: colors.textMuted }]}>days</Text>
+            </View>
+          </Field>
+        </View>
+        <View style={styles.recoveryActions}>
+          <Button
+            disabled={
+              debtSeconds <= 0 ||
+              recovery === null ||
+              !recovery.can_reset ||
+              resetPending
+            }
+            label="Forgive carried debt"
+            onPress={confirmReset}
+            pending={resetPending}
+            size="sm"
+            variant="secondary"
+          />
+          <Text style={[styles.help, styles.helpGrow, { color: colors.textMuted }]}>
+            {debtSeconds <= 0
+              ? recovery?.next_reset_on != null
+                ? `No carried debt. Next reset available on ${formatDate(
+                    recovery.next_reset_on,
+                  )}.`
+                : 'No carried debt.'
+              : recovery === null
+                ? 'Checking cooldown…'
+                : recovery.can_reset
+                  ? 'Available now.'
+                  : recovery.next_reset_on !== null
+                    ? `Next reset available on ${formatDate(recovery.next_reset_on)}.`
+                    : 'Cooldown active.'}
+          </Text>
+        </View>
+        <Text style={[styles.paragraph, { color: colors.textMuted }]}>
+          The reset clears only the daily carried debt. Study time, history, and
+          checklist progress are kept.
+        </Text>
       </SettingsSection>
 
       <SettingsSection
@@ -459,11 +675,29 @@ const styles = StyleSheet.create({
   section: { gap: 14 },
   sectionBody: { gap: 12 },
   boundaryInput: { width: 110, fontVariant: ['tabular-nums'] },
+  dateInput: { width: 145, fontVariant: ['tabular-nums'] },
   inlineFields: { flexDirection: 'row', gap: 16, flexWrap: 'wrap' },
   numberRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   numberInput: { width: 82, fontVariant: ['tabular-nums'] },
   quotaInput: { width: 72, fontVariant: ['tabular-nums'] },
   unit: { fontSize: 12 },
+  recoveryDebtRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: 10,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+  },
+  recoveryDebtLabel: { fontSize: 12, fontWeight: '600' },
+  recoveryDebtValue: { fontSize: 24, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  recoveryActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
   chips: { flexDirection: 'row', gap: 5, flexWrap: 'wrap' },
   chip: {
     borderRadius: 9,

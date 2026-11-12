@@ -10,6 +10,7 @@ Let ``D`` be the debt carried in and ``E`` the seconds studied during the day:
 Day kind        required                    debt out
 ==============  ==========================  ================================
 FREE            ``0``                       ``max(0, D - E)``
+VACATION        ``0``                       ``max(0, D - E)``
 CARRIED         ``D + quota``               ``max(0, D + quota - E)``
 OPTIONAL        ``D + quota``               ``max(0, D - E)``
 ==============  ==========================  ================================
@@ -17,8 +18,8 @@ OPTIONAL        ``D + quota``               ``max(0, D - E)``
 On a CARRIED day the day's own quota becomes part of the requirement and, if
 unmet, is added to the debt. On an OPTIONAL day the quota is only a goal that is
 discarded when unmet, so only the pre-existing debt ``D`` survives; study time
-is applied to that debt first. A FREE day has no requirement but study time (if
-any) still pays down debt.
+is applied to that debt first. A FREE or VACATION day has no requirement but
+study time (if any) still pays down debt.
 """
 
 from __future__ import annotations
@@ -42,6 +43,8 @@ class DayResult:
     optional_goal: int
     #: How much of the optional goal was reached (0 otherwise).
     optional_done: int
+    #: Debt forgiven at settlement because it exceeded the configured ceiling.
+    debt_forgiven: int = 0
 
     @property
     def completed(self) -> bool:
@@ -53,15 +56,25 @@ class DayResult:
 
 
 def settle(
-    policy: DayPolicy, logical_date: date, debt_in: int, elapsed: int
+    policy: DayPolicy,
+    logical_date: date,
+    debt_in: int,
+    elapsed: int,
+    *,
+    max_debt: int | None = None,
 ) -> DayResult:
-    """Settle ``logical_date`` and return the resulting :class:`DayResult`."""
+    """Settle ``logical_date`` and return the resulting :class:`DayResult`.
+
+    ``max_debt`` optionally caps the resulting debt. The amount removed by the
+    cap is reported in ``debt_forgiven``; ``required`` still uses the debt that
+    was actually carried into the day.
+    """
     if debt_in < 0:
         raise ValueError("debt_in must not be negative")
     if elapsed < 0:
         raise ValueError("elapsed must not be negative")
 
-    if policy.kind is DayKind.FREE:
+    if policy.kind in (DayKind.FREE, DayKind.VACATION):
         required = 0
         debt_out = max(0, debt_in - elapsed)
         optional_goal = 0
@@ -77,6 +90,11 @@ def settle(
         optional_goal = policy.quota_seconds
         optional_done = min(optional_goal, max(0, elapsed - debt_in))
 
+    debt_forgiven = 0
+    if max_debt is not None and max_debt > 0 and debt_out > max_debt:
+        debt_forgiven = debt_out - max_debt
+        debt_out = max_debt
+
     return DayResult(
         logical_date=logical_date,
         debt_in=debt_in,
@@ -85,4 +103,5 @@ def settle(
         debt_out=debt_out,
         optional_goal=optional_goal,
         optional_done=optional_done,
+        debt_forgiven=debt_forgiven,
     )

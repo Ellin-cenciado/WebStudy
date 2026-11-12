@@ -62,6 +62,9 @@ class ApiTest(unittest.TestCase):
         config = self.client.get("/api/config").json()
         self.assertEqual(config["boundary"], "04:00")
         self.assertEqual(config["schedule"]["monday"]["mode"], "carried")
+        self.assertFalse(config["vacation"]["enabled"])
+        self.assertEqual(config["max_debt_hours"], 12)
+        self.assertEqual(config["reset_cooldown_days"], 30)
 
         config["schedule"]["monday"] = {"mode": "free", "quota_minutes": 240}
         response = self.client.put("/api/config", json=config)
@@ -74,6 +77,51 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(state["snapshot"]["is_free_day"])
         self.assertEqual(state["snapshot"]["required_seconds"], 0)
         self.assertEqual(state["snapshot"]["remaining_seconds"], 0)
+
+    def test_vacation_config_and_state(self) -> None:
+        config = self.client.get("/api/config").json()
+        config["vacation"] = {
+            "enabled": True,
+            "start": "2026-10-12",
+            "end": "2026-10-12",
+        }
+        response = self.client.put("/api/config", json=config)
+        self.assertEqual(response.status_code, 200)
+        saved = response.json()
+        self.assertTrue(saved["vacation"]["enabled"])
+        self.assertEqual(saved["vacation"]["start"], "2026-10-12")
+
+        state = self.client.get("/api/state").json()
+        self.assertTrue(state["snapshot"]["is_vacation"])
+        self.assertTrue(state["snapshot"]["is_free_day"])
+        self.assertEqual(state["snapshot"]["day_kind"], "vacation")
+        self.assertEqual(state["snapshot"]["required_seconds"], 0)
+
+    def test_recovery_and_reset_cooldown(self) -> None:
+        self.clock.set_wall(
+            datetime(2026, 10, 13, 10, 0, tzinfo=TZ)
+        )
+        self.app.state.service.tick()
+
+        recovery = self.client.get("/api/recovery").json()
+        self.assertEqual(recovery["debt_seconds"], 4 * SECONDS_PER_HOUR)
+        self.assertTrue(recovery["can_reset"])
+        self.assertIsNone(recovery["next_reset_on"])
+
+        response = self.client.post("/api/recovery/reset")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["forgiven_seconds"], 4 * SECONDS_PER_HOUR)
+        self.assertFalse(payload["recovery"]["can_reset"])
+        self.assertEqual(
+            payload["recovery"]["next_reset_on"], "2026-11-12"
+        )
+
+        state = self.client.get("/api/state").json()
+        self.assertEqual(state["snapshot"]["debt_seconds"], 0)
+
+        second = self.client.post("/api/recovery/reset")
+        self.assertEqual(second.status_code, 409)
 
     def test_config_validation(self) -> None:
         invalid = self.client.get("/api/config").json()

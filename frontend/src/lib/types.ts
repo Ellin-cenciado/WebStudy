@@ -26,6 +26,7 @@ export interface Snapshot {
   running: boolean;
   day_complete: boolean;
   is_free_day: boolean;
+  is_vacation: boolean;
 }
 
 export interface ChecklistSummary {
@@ -78,6 +79,20 @@ export interface WeekdaySetting {
   quota_minutes: number;
 }
 
+export interface VacationWindow {
+  enabled: boolean;
+  start: string | null;
+  end: string | null;
+}
+
+export interface Recovery {
+  debt_seconds: number;
+  cooldown_days: number;
+  last_reset_on: string | null;
+  next_reset_on: string | null;
+  can_reset: boolean;
+}
+
 export interface Config {
   boundary: string;
   auto_start: boolean;
@@ -85,6 +100,9 @@ export interface Config {
   break_minutes: number;
   notifications: boolean;
   schedule: Record<WeekdayName, WeekdaySetting>;
+  vacation: VacationWindow;
+  max_debt_hours: number;
+  reset_cooldown_days: number;
 }
 
 export interface DayRow {

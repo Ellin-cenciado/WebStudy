@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import tomllib
 from dataclasses import dataclass, field
-from datetime import time
+from datetime import date, time
 from pathlib import Path
 
 from ..core.schedule import (
@@ -19,6 +19,7 @@ from ..core.schedule import (
     Schedule,
     default_schedule,
 )
+from ..core.vacation import Vacation
 
 _MODE_TO_KIND = {
     "carried": DayKind.CARRIED,
@@ -55,6 +56,15 @@ class Config:
     notifications: bool = True
     schedule: Schedule = field(default_factory=default_schedule)
     transparency: TransparencyConfig = field(default_factory=TransparencyConfig)
+    vacation: Vacation = field(default_factory=Vacation)
+    max_debt_seconds: int = 12 * 60 * 60
+    reset_cooldown_days: int = 30
+
+    def __post_init__(self) -> None:
+        if self.max_debt_seconds < 0:
+            raise ValueError("max_debt_seconds must not be negative")
+        if self.reset_cooldown_days < 1:
+            raise ValueError("reset_cooldown_days must be at least 1")
 
 
 def parse_boundary(value: str) -> time:
@@ -72,6 +82,20 @@ def format_boundary(boundary: time) -> str:
     return f"{boundary.hour:02d}:{boundary.minute:02d}"
 
 
+def parse_optional_date(value: object) -> date | None:
+    """Parse an optional ISO date, treating blank/None as no date."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return date.fromisoformat(text)
+
+
+def format_optional_date(value: date | None) -> str:
+    return value.isoformat() if value is not None else ""
+
+
 def loads(text: str) -> Config:
     data = tomllib.loads(text) if text.strip() else {}
 
@@ -79,6 +103,8 @@ def loads(text: str) -> Config:
     pomodoro = data.get("pomodoro", {})
     notifications = data.get("notifications", {})
     weekday = data.get("weekday", {})
+    vacation_section = data.get("vacation", {}) or {}
+    recovery_section = data.get("recovery", {}) or {}
 
     defaults = default_schedule()
     days: dict[int, DayPolicy] = {}
@@ -103,6 +129,11 @@ def loads(text: str) -> Config:
         active_opacity=float(transparency_section.get("active_opacity", 0.90)),
         fade_ms=int(transparency_section.get("fade_ms", 300)),
     )
+    vacation = Vacation(
+        enabled=bool(vacation_section.get("enabled", False)),
+        start=parse_optional_date(vacation_section.get("start")),
+        end=parse_optional_date(vacation_section.get("end")),
+    )
 
     return Config(
         boundary=parse_boundary(str(general.get("day_boundary", "04:00"))),
@@ -112,6 +143,9 @@ def loads(text: str) -> Config:
         notifications=bool(notifications.get("enabled", True)),
         schedule=Schedule(days),
         transparency=transparency,
+        vacation=vacation,
+        max_debt_seconds=int(recovery_section.get("max_debt_hours", 12)) * 60 * 60,
+        reset_cooldown_days=int(recovery_section.get("reset_cooldown_days", 30)),
     )
 
 
@@ -142,6 +176,17 @@ def dumps(config: Config) -> str:
     lines.append(f"idle_opacity = {config.transparency.idle_opacity}")
     lines.append(f"active_opacity = {config.transparency.active_opacity}")
     lines.append(f"fade_ms = {config.transparency.fade_ms}")
+    lines.append("")
+    lines.append("[vacation]")
+    lines.append(f"enabled = {_toml_bool(config.vacation.enabled)}")
+    if config.vacation.start is not None:
+        lines.append(f'start = "{format_optional_date(config.vacation.start)}"')
+    if config.vacation.end is not None:
+        lines.append(f'end = "{format_optional_date(config.vacation.end)}"')
+    lines.append("")
+    lines.append("[recovery]")
+    lines.append(f"max_debt_hours = {config.max_debt_seconds // (60 * 60)}")
+    lines.append(f"reset_cooldown_days = {config.reset_cooldown_days}")
     for name in WEEKDAY_NAMES:
         policy = config.schedule.days[WEEKDAY_INDEX[name]]
         lines.append("")

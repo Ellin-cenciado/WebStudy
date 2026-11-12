@@ -4,6 +4,7 @@ import type {
   ChecklistImportSubject,
   Config,
   PollPayload,
+  Recovery,
   StatsResponse,
 } from './types';
 
@@ -54,8 +55,18 @@ export const api = {
       break_minutes: config.break_minutes,
       notifications: config.notifications,
       schedule: config.schedule,
+      vacation: config.vacation,
+      max_debt_hours: config.max_debt_hours,
+      reset_cooldown_days: config.reset_cooldown_days,
     }),
   stats: (days = 30) => dispatch<StatsResponse>('stats', { days }),
+
+  recovery: () => dispatch<Recovery>('recovery'),
+  resetDebt: () =>
+    dispatch<PollPayload & {
+      reset: { forgiven_seconds: number; next_reset_on: string };
+      recovery: Recovery;
+    }>('resetDebt'),
 
   start: () => dispatch<PollPayload>('start'),
   pause: () => dispatch<PollPayload>('pause'),

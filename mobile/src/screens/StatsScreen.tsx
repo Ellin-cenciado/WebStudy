@@ -24,7 +24,7 @@ import type { DayRow, StatsResponse } from '../lib/types';
 const CHART_HEIGHT = 132;
 
 function dayTone(day: DayRow): 'good' | 'warn' | 'muted' {
-  if (day.day_kind === 'free') {
+  if (day.day_kind === 'free' || day.day_kind === 'vacation') {
     return 'muted';
   }
   return day.completed ? 'good' : 'warn';
@@ -32,6 +32,7 @@ function dayTone(day: DayRow): 'good' | 'warn' | 'muted' {
 
 function DayRowItem({ day, last }: { day: DayRow; last: boolean }) {
   const { colors } = useTheme();
+  const offDay = day.day_kind === 'free' || day.day_kind === 'vacation';
   const percent =
     day.required_seconds > 0
       ? Math.min(100, Math.round((day.elapsed_seconds / day.required_seconds) * 100))
@@ -50,7 +51,11 @@ function DayRowItem({ day, last }: { day: DayRow; last: boolean }) {
       <View style={styles.dayRow}>
         <View style={[styles.percent, { backgroundColor: toneBg }]}>
           <Text style={[styles.percentText, { color: toneFg }]}>
-            {day.day_kind === 'free' ? 'Free' : `${percent}%`}
+            {day.day_kind === 'vacation'
+              ? 'Vac'
+              : day.day_kind === 'free'
+                ? 'Free'
+                : `${percent}%`}
           </Text>
         </View>
         <View style={styles.dayInfo}>
@@ -74,16 +79,12 @@ function DayRowItem({ day, last }: { day: DayRow; last: boolean }) {
               {
                 color: day.completed
                   ? colors.good
-                  : day.day_kind === 'free'
+                  : offDay
                     ? colors.textFaint
                     : colors.warn,
               },
             ]}>
-            {day.day_kind === 'free'
-              ? 'No goal'
-              : day.completed
-                ? 'Complete'
-                : 'Incomplete'}
+            {offDay ? 'No goal' : day.completed ? 'Complete' : 'Incomplete'}
           </Text>
           <Text style={[styles.dayDebt, { color: colors.textFaint }]}>
             debt {formatHours(day.debt_out_seconds)}

@@ -13,12 +13,13 @@ import {
 import type { DayRow, StatsResponse } from "../lib/types";
 
 function dayTone(day: DayRow): "good" | "warning" | "neutral" {
-  if (day.day_kind === "free") return "neutral";
+  if (day.day_kind === "free" || day.day_kind === "vacation") return "neutral";
   if (day.completed) return "good";
   return "warning";
 }
 
 function DayRowItem({ day }: { day: DayRow }) {
+  const offDay = day.day_kind === "free" || day.day_kind === "vacation";
   const percent =
     day.required_seconds > 0
       ? Math.min(100, Math.round((day.elapsed_seconds / day.required_seconds) * 100))
@@ -37,7 +38,11 @@ function DayRowItem({ day }: { day: DayRow }) {
             "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
         )}
       >
-        {day.day_kind === "free" ? "Free" : `${percent}%`}
+        {day.day_kind === "vacation"
+          ? "Vac"
+          : day.day_kind === "free"
+            ? "Free"
+            : `${percent}%`}
       </div>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold">
@@ -59,16 +64,12 @@ function DayRowItem({ day }: { day: DayRow }) {
             "text-xs font-bold",
             day.completed
               ? "text-emerald-600 dark:text-emerald-400"
-              : day.day_kind === "free"
+              : offDay
                 ? "text-slate-400"
                 : "text-amber-600 dark:text-amber-400",
           )}
         >
-          {day.day_kind === "free"
-            ? "No goal"
-            : day.completed
-              ? "Complete"
-              : "Incomplete"}
+          {offDay ? "No goal" : day.completed ? "Complete" : "Incomplete"}
         </p>
         <p className="text-[11px] tabular-nums text-slate-400 dark:text-slate-500">
           debt out {formatHours(day.debt_out_seconds)}
@@ -111,7 +112,7 @@ function Bars({ days }: { days: DayRow[] }) {
               <div
                 className={cn(
                   "w-full rounded-t-md transition group-hover:opacity-80",
-                  day.day_kind === "free"
+                  day.day_kind === "free" || day.day_kind === "vacation"
                     ? "bg-slate-300 dark:bg-slate-700"
                     : day.completed
                       ? "bg-emerald-500"

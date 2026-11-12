@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from ..core.schedule import WEEKDAY_INDEX, WEEKDAY_NAMES, DayKind, DayPolicy, Schedule
+from ..core.vacation import Vacation
 from ..events import Event
 from ..service import StudyService
 from ..storage.config import Config, parse_boundary
@@ -14,6 +15,7 @@ from .schemas import (
     ConfigUpdate,
     DayRowResponse,
     EventResponse,
+    RecoveryResponse,
     SnapshotResponse,
     StateResponse,
     StatsResponse,
@@ -44,6 +46,7 @@ def state_response(service: StudyService) -> StateResponse:
             running=snapshot.running,
             day_complete=snapshot.day_complete,
             is_free_day=snapshot.is_free_day,
+            is_vacation=snapshot.is_vacation,
         ),
         checklist=ChecklistSummaryResponse(
             active_subject_id=summary.active_subject_id,
@@ -85,6 +88,24 @@ def config_from_update(update: ConfigUpdate, current: Config) -> Config:
         notifications=update.notifications,
         schedule=Schedule(days),
         transparency=current.transparency,
+        vacation=Vacation(
+            enabled=update.vacation.enabled,
+            start=update.vacation.start,
+            end=update.vacation.end,
+        ),
+        max_debt_seconds=update.max_debt_hours * 60 * 60,
+        reset_cooldown_days=update.reset_cooldown_days,
+    )
+
+
+def recovery_response(service: StudyService) -> RecoveryResponse:
+    status = service.recovery()
+    return RecoveryResponse(
+        debt_seconds=status.debt_seconds,
+        cooldown_days=status.cooldown_days,
+        last_reset_on=status.last_reset_on,
+        next_reset_on=status.next_reset_on,
+        can_reset=status.can_reset,
     )
 
 
@@ -92,7 +113,7 @@ def current_streak(rows) -> int:
     """Number of consecutive completed study days, ignoring free days."""
     streak = 0
     for row in sorted(rows, key=lambda r: r.logical_date, reverse=True):
-        if row.day_kind == DayKind.FREE.value:
+        if row.day_kind in (DayKind.FREE.value, DayKind.VACATION.value):
             continue
         if row.required_seconds == 0:
             continue

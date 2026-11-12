@@ -71,6 +71,7 @@ def _snapshot_payload(service):
             "running": snapshot.running,
             "day_complete": snapshot.day_complete,
             "is_free_day": snapshot.is_free_day,
+            "is_vacation": snapshot.is_vacation,
         },
         "checklist": {
             "active_subject_id": summary.active_subject_id,
@@ -89,6 +90,9 @@ def _notification_payload(service):
     if snapshot.day_complete:
         title = "Day complete"
         body = "Today's study goal is finished."
+    elif snapshot.is_vacation:
+        title = "Vacation"
+        body = "No study required today. Debt is preserved."
     elif snapshot.is_free_day:
         title = "Free day"
         body = "No study required today."
@@ -110,6 +114,7 @@ def _notification_payload(service):
         "running": snapshot.running,
         "day_complete": snapshot.day_complete,
         "is_free_day": snapshot.is_free_day,
+        "is_vacation": snapshot.is_vacation,
         "notifications_enabled": service.config.notifications,
     }
 
@@ -151,6 +156,21 @@ def _config_payload(config):
         "study_minutes": config.study_seconds // 60,
         "break_minutes": config.break_seconds // 60,
         "notifications": config.notifications,
+        "vacation": {
+            "enabled": config.vacation.enabled,
+            "start": (
+                config.vacation.start.isoformat()
+                if config.vacation.start is not None
+                else None
+            ),
+            "end": (
+                config.vacation.end.isoformat()
+                if config.vacation.end is not None
+                else None
+            ),
+        },
+        "max_debt_hours": config.max_debt_seconds // (60 * 60),
+        "reset_cooldown_days": config.reset_cooldown_days,
         "schedule": {
             name: {
                 "mode": config.schedule.days[index].kind.value,
@@ -179,7 +199,8 @@ def _config_from_payload(payload, current):
         DayPolicy,
         Schedule,
     )
-    from webstudy.storage.config import Config, parse_boundary
+    from webstudy.core.vacation import Vacation
+    from webstudy.storage.config import Config, parse_boundary, parse_optional_date
 
     days = {}
     for name in WEEKDAY_NAMES:
@@ -188,6 +209,7 @@ def _config_from_payload(payload, current):
         quota = 0 if kind is DayKind.FREE else int(setting.get("quota_minutes", 0)) * 60
         days[WEEKDAY_INDEX[name]] = DayPolicy(quota, kind)
 
+    vacation_payload = payload.get("vacation", {}) or {}
     return Config(
         boundary=parse_boundary(str(payload.get("boundary", "04:00"))),
         auto_start=bool(payload.get("auto_start", False)),
@@ -196,13 +218,39 @@ def _config_from_payload(payload, current):
         notifications=bool(payload.get("notifications", True)),
         schedule=Schedule(days),
         transparency=current.transparency,
+        vacation=Vacation(
+            enabled=bool(vacation_payload.get("enabled", False)),
+            start=parse_optional_date(vacation_payload.get("start")),
+            end=parse_optional_date(vacation_payload.get("end")),
+        ),
+        max_debt_seconds=int(payload.get("max_debt_hours", 12)) * 60 * 60,
+        reset_cooldown_days=int(payload.get("reset_cooldown_days", 30)),
     )
 
 
-def _current_streak(rows, day_kind_free: str) -> int:
+def _recovery_payload(service):
+    status = service.recovery()
+    return {
+        "debt_seconds": status.debt_seconds,
+        "cooldown_days": status.cooldown_days,
+        "last_reset_on": (
+            status.last_reset_on.isoformat()
+            if status.last_reset_on is not None
+            else None
+        ),
+        "next_reset_on": (
+            status.next_reset_on.isoformat()
+            if status.next_reset_on is not None
+            else None
+        ),
+        "can_reset": status.can_reset,
+    }
+
+
+def _current_streak(rows, skipped_kinds: set[str]) -> int:
     streak = 0
     for row in sorted(rows, key=lambda item: item.logical_date, reverse=True):
-        if row.day_kind == day_kind_free:
+        if row.day_kind in skipped_kinds:
             continue
         if row.required_seconds == 0:
             continue
@@ -237,7 +285,9 @@ def _stats_payload(service, days: int):
     debt = rows[-1].debt_out_seconds if rows else 0
     return {
         "summary": {
-            "streak": _current_streak(rows, DayKind.FREE.value),
+            "streak": _current_streak(
+                rows, {DayKind.FREE.value, DayKind.VACATION.value}
+            ),
             "completed": completed,
             "total": len(relevant),
             "debt_seconds": debt,
@@ -324,6 +374,19 @@ def dispatch(method: str, payload_json: str | None = None) -> str:
 
             if method == "config":
                 return _ok(_config_payload(service.config))
+
+            if method == "recovery":
+                return _ok(_recovery_payload(service))
+
+            if method == "resetDebt":
+                outcome = service.reset_debt()
+                payload = _poll_payload(service)
+                payload["reset"] = {
+                    "forgiven_seconds": outcome.forgiven_seconds,
+                    "next_reset_on": outcome.next_reset_on.isoformat(),
+                }
+                payload["recovery"] = _recovery_payload(service)
+                return _ok(payload)
 
             if method == "saveConfig":
                 from webstudy.storage import config as config_mod

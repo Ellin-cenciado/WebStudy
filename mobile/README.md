@@ -124,6 +124,19 @@ actually credited (such as a force-stop or reboot gap) is not reported as away
 time. Force-stopping the app or rebooting stops the service; time while the
 process was dead is not credited.
 
+## Vacation, debt ceiling, and recovery
+
+Vacation mode is configured in **Settings → Vacation** as an optional date
+range. Vacation days have no quota and add no new debt, but existing debt is
+preserved. Already-settled days are not rewritten.
+
+**Settings → Recovery** controls the debt ceiling and the reset cooldown. The
+ceiling defaults to 12 hours (`0` disables it). When debt would exceed the
+ceiling, the excess is forgiven and an event is emitted. **Forgive carried
+debt** clears the current daily debt without erasing study time, history, or
+checklist progress; the next reset is unavailable until the cooldown passes.
+The cooldown is persisted in the tracker state, so it survives app restarts.
+
 ## Architecture
 
 ```text

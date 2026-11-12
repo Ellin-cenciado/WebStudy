@@ -18,7 +18,14 @@ from .pomodoro import (
     advance,
     phase_length,
 )
-from .schedule import WEEKDAY_NAMES, DayKind, Schedule
+from .schedule import (
+    VACATION_POLICY,
+    WEEKDAY_NAMES,
+    DayKind,
+    DayPolicy,
+    Schedule,
+)
+from .vacation import Vacation
 
 
 def logical_day_for(now: datetime, boundary: time) -> date:
@@ -49,6 +56,8 @@ class TrackerState:
     #: One-shot break length (e.g. the 5-minute subject rest); 0 = normal.
     break_override_seconds: int = 0
     running: bool = False
+    #: Logical day of the most recent debt reset, used for the cooldown.
+    last_reset_day: date | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +92,7 @@ class Snapshot:
     running: bool
     day_complete: bool
     is_free_day: bool
+    is_vacation: bool
 
 
 class Tracker:
@@ -93,11 +103,19 @@ class Tracker:
         pomodoro: PomodoroConfig,
         boundary: time = time(4, 0),
         state: TrackerState | None = None,
+        vacation: Vacation | None = None,
+        max_debt_seconds: int = 0,
     ) -> None:
+        if max_debt_seconds < 0:
+            raise ValueError("max_debt_seconds must not be negative")
         self.clock = clock
         self.schedule = schedule
         self.pomodoro = pomodoro
         self.boundary = boundary
+        self.vacation = vacation or Vacation()
+        self.max_debt_seconds = max_debt_seconds
+        #: Debt trimmed by the ceiling when the existing state was loaded.
+        self.startup_debt_forgiven = 0
         #: Fractional seconds not yet promoted to whole seconds.
         self._frac = 0.0
         self._last_monotonic = clock.monotonic()
@@ -107,10 +125,13 @@ class Tracker:
             self.new_state()
         else:
             self.load_state(state)
+        if not self.startup_debt_forgiven:
+            self.startup_debt_forgiven = self.cap_debt()
 
     def load_state(self, state: TrackerState) -> None:
         """Replace the current state (e.g. restored from disk) and resync."""
         self.state = state
+        self.startup_debt_forgiven = self.cap_debt()
         self._frac = 0.0
         self._last_monotonic = self.clock.monotonic()
         self.sync()
@@ -123,13 +144,23 @@ class Tracker:
 
     # -- derived values -------------------------------------------------
 
+    def policy_for(self, day: date) -> DayPolicy:
+        """The effective policy, including any active vacation range."""
+        if self.vacation.includes(day):
+            return VACATION_POLICY
+        return self.schedule.policy(day)
+
     @property
     def policy(self):
-        return self.schedule.policy(self.state.logical_day)
+        return self.policy_for(self.state.logical_day)
+
+    @property
+    def is_vacation(self) -> bool:
+        return self.policy.kind is DayKind.VACATION
 
     @property
     def is_free_day(self) -> bool:
-        return self.policy.kind is DayKind.FREE
+        return self.policy.kind in (DayKind.FREE, DayKind.VACATION)
 
     @property
     def required_seconds(self) -> int:
@@ -143,8 +174,8 @@ class Tracker:
 
     @property
     def day_complete(self) -> bool:
-        # A free day never "completes"; study on it is purely optional and only
-        # serves to pay down debt.
+        # A free or vacation day never "completes"; study on it is purely
+        # optional and only serves to pay down debt.
         if self.is_free_day:
             return False
         return self.state.elapsed_seconds >= self.required_seconds
@@ -174,6 +205,19 @@ class Tracker:
     def phase_remaining_seconds(self) -> int:
         return max(0, self.phase_length_seconds - self.state.phase_elapsed_seconds)
 
+    def cap_debt(self) -> int:
+        """Trim current debt to the configured ceiling.
+
+        Returns the amount forgiven. Calling this repeatedly is safe; only the
+        first call that crosses the ceiling returns a positive amount.
+        """
+        cap = self.max_debt_seconds
+        if cap <= 0 or self.state.debt_seconds <= cap:
+            return 0
+        forgiven = self.state.debt_seconds - cap
+        self.state.debt_seconds = cap
+        return forgiven
+
     # -- control --------------------------------------------------------
 
     def sync(self) -> list[SettledDay]:
@@ -188,12 +232,13 @@ class Tracker:
             return results
 
         while self.state.logical_day < today:
-            policy = self.schedule.policy(self.state.logical_day)
+            policy = self.policy_for(self.state.logical_day)
             result = settle(
                 policy,
                 self.state.logical_day,
                 self.state.debt_seconds,
                 self.state.elapsed_seconds,
+                max_debt=self.max_debt_seconds,
             )
             results.append(
                 SettledDay(
@@ -228,6 +273,7 @@ class Tracker:
             self.state.logical_day,
             self.state.debt_seconds,
             self.state.elapsed_seconds,
+            max_debt=self.max_debt_seconds,
         )
 
     def start(self) -> list[Phase]:
@@ -342,4 +388,5 @@ class Tracker:
             running=self.state.running,
             day_complete=self.day_complete,
             is_free_day=self.is_free_day,
+            is_vacation=self.is_vacation,
         )

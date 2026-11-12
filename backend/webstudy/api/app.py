@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
 from ..core.clock import Clock, SystemClock
-from ..service import StudyService
+from ..service import RecoveryCooldownError, StudyService
 from ..storage import config as config_mod
 from ..storage import paths
 from ..study_prep.errors import StudyPrepError
@@ -31,6 +31,8 @@ from .schemas import (
     ItemResponse,
     ItemUpdateRequest,
     NameRequest,
+    RecoveryResponse,
+    ResetDebtResponse,
     SubjectRequest,
     SubjectResponse,
 )
@@ -38,6 +40,7 @@ from .serializers import (
     config_from_update,
     config_response,
     event_response,
+    recovery_response,
     state_response,
     stats_response,
 )
@@ -262,6 +265,45 @@ def create_app(
     async def get_stats(request: Request, days: int = Query(default=30, ge=1, le=365)):
         async with request.app.state.lock:
             return stats_response(request.app.state.service, days)
+
+    @app.get("/api/recovery", response_model=RecoveryResponse)
+    async def get_recovery(request: Request):
+        async with request.app.state.lock:
+            return recovery_response(request.app.state.service)
+
+    @app.post("/api/recovery/reset", response_model=ResetDebtResponse)
+    async def reset_debt(request: Request):
+        service = request.app.state.service
+        async with request.app.state.lock:
+            status = service.recovery()
+            if not status.can_reset:
+                if status.next_reset_on is not None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "Next debt reset available on "
+                            f"{status.next_reset_on.isoformat()}."
+                        ),
+                    )
+                raise HTTPException(
+                    status_code=400, detail="There is no carried debt to reset."
+                )
+            try:
+                outcome = service.reset_debt()
+            except RecoveryCooldownError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            events = service.take_pending_events()
+            state = state_response(service).model_dump(mode="json")
+            recovery = recovery_response(service)
+        await request.app.state.broadcaster.publish("state", state)
+        for event in events:
+            await request.app.state.broadcaster.publish(
+                "event", event_response(event).model_dump(mode="json")
+            )
+        return ResetDebtResponse(
+            forgiven_seconds=outcome.forgiven_seconds,
+            recovery=recovery,
+        )
 
     @app.post("/api/session/start", status_code=204)
     async def start_session(request: Request):

@@ -1,23 +1,39 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Bell,
   Check,
   Clock3,
   Database,
   Moon,
+  Plane,
   RotateCcw,
   Save,
   Settings2,
+  ShieldCheck,
   Sun,
   TriangleAlert,
 } from "lucide-react";
 import { PageHeader, Spinner } from "../components/ui";
 import { useConfig } from "../context/ConfigContext";
+import { useDialog } from "../context/DialogContext";
+import { useLive } from "../context/LiveContext";
 import { useTheme } from "../context/ThemeContext";
 import { useToast } from "../context/ToastContext";
+import { api } from "../lib/api";
 import { cn } from "../lib/cn";
-import { errorMessage, titleCase } from "../lib/format";
-import { DAY_MODES, WEEKDAYS, type Config, type DayMode } from "../lib/types";
+import {
+  errorMessage,
+  formatDate,
+  formatHours,
+  titleCase,
+} from "../lib/format";
+import {
+  DAY_MODES,
+  WEEKDAYS,
+  type Config,
+  type DayMode,
+  type Recovery,
+} from "../lib/types";
 
 const MODE_HELP: Record<DayMode, string> = {
   carried: "Unmet required time carries into the next day.",
@@ -58,8 +74,12 @@ export function SettingsPage() {
   const { config, loading, error, refresh, save } = useConfig();
   const { push } = useToast();
   const { theme, toggle } = useTheme();
+  const { state } = useLive();
+  const { confirm } = useDialog();
   const [draft, setDraft] = useState<Config | null>(null);
   const [pending, setPending] = useState(false);
+  const [recovery, setRecovery] = useState<Recovery | null>(null);
+  const [resetPending, setResetPending] = useState(false);
   const [permission, setPermission] = useState<
     NotificationPermission | "unsupported"
   >(() =>
@@ -71,6 +91,18 @@ export function SettingsPage() {
       setDraft(cloneConfig(config));
     }
   }, [config]);
+
+  const refreshRecovery = useCallback(async () => {
+    try {
+      setRecovery(await api.recovery());
+    } catch {
+      // The settings page can still function without the recovery preview.
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshRecovery();
+  }, [refreshRecovery]);
 
   const dirty = useMemo(
     () =>
@@ -103,11 +135,44 @@ export function SettingsPage() {
     updateDay(day, { mode, quota_minutes: quota });
   };
 
+  const updateVacation = (patch: Partial<Config["vacation"]>) => {
+    setDraft((current) =>
+      current === null
+        ? current
+        : { ...current, vacation: { ...current.vacation, ...patch } },
+    );
+  };
+
+  const debtSeconds =
+    state?.snapshot.debt_seconds ?? recovery?.debt_seconds ?? 0;
+
   const submit = async () => {
     if (draft === null || !dirty) return;
+    if (
+      draft.vacation.enabled &&
+      draft.vacation.start !== null &&
+      draft.vacation.end !== null &&
+      draft.vacation.start > draft.vacation.end
+    ) {
+      push({
+        kind: "error",
+        title: "Invalid vacation range",
+        body: "The vacation end date must be on or after the start date.",
+      });
+      return;
+    }
+    if (draft.reset_cooldown_days < 1) {
+      push({
+        kind: "error",
+        title: "Invalid reset cooldown",
+        body: "The reset cooldown must be at least one day.",
+      });
+      return;
+    }
     setPending(true);
     try {
       await save(draft);
+      await refreshRecovery();
       push({ kind: "success", title: "Settings saved" });
     } catch (caught) {
       push({
@@ -117,6 +182,34 @@ export function SettingsPage() {
       });
     } finally {
       setPending(false);
+    }
+  };
+
+  const resetDebt = async () => {
+    if (debtSeconds <= 0 || recovery === null || !recovery.can_reset) return;
+    const ok = await confirm({
+      title: "Forgive carried debt?",
+      message: `This clears ${formatHours(
+        debtSeconds,
+      )} of carried debt. The next reset will be available after the ${
+        recovery.cooldown_days
+      }-day cooldown. Study time, history, and checklist progress are kept.`,
+      confirmLabel: "Forgive debt",
+      destructive: true,
+    });
+    if (!ok) return;
+    setResetPending(true);
+    try {
+      const result = await api.resetDebt();
+      setRecovery(result.recovery);
+    } catch (caught) {
+      push({
+        kind: "error",
+        title: "Could not reset debt",
+        body: errorMessage(caught),
+      });
+    } finally {
+      setResetPending(false);
     }
   };
 
@@ -270,6 +363,66 @@ export function SettingsPage() {
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="mb-4 flex items-center gap-2">
+          <Plane className="size-4 text-indigo-500" />
+          <h2 className="text-sm font-bold">Vacation</h2>
+        </div>
+        <label className="flex items-start gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+          <input
+            type="checkbox"
+            checked={draft.vacation.enabled}
+            onChange={(event) =>
+              updateVacation({ enabled: event.target.checked })
+            }
+            className="mt-0.5 size-4 accent-indigo-600"
+          />
+          <span>
+            <span className="block text-sm font-semibold">
+              Enable vacation mode
+            </span>
+            <span className="block text-xs text-slate-500 dark:text-slate-400">
+              Vacation days have no quota and add no new debt. Existing debt is
+              preserved.
+            </span>
+          </span>
+        </label>
+        {draft.vacation.enabled ? (
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <SettingsField
+              label="Starts"
+              hint="Leave blank to start immediately."
+            >
+              <input
+                type="date"
+                value={draft.vacation.start ?? ""}
+                onChange={(event) =>
+                  updateVacation({ start: event.target.value || null })
+                }
+                className={inputClass}
+              />
+            </SettingsField>
+            <SettingsField
+              label="Ends"
+              hint="Leave blank to stay on until you turn it off."
+            >
+              <input
+                type="date"
+                value={draft.vacation.end ?? ""}
+                onChange={(event) =>
+                  updateVacation({ end: event.target.value || null })
+                }
+                className={inputClass}
+              />
+            </SettingsField>
+          </div>
+        ) : null}
+        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+          Past settled days are not rewritten. If you want a fresh start on
+          returning, use the recovery reset below.
+        </p>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="mb-4 flex items-center gap-2">
           <Clock3 className="size-4 text-indigo-500" />
           <h2 className="text-sm font-bold">Pomodoro</h2>
         </div>
@@ -318,6 +471,106 @@ export function SettingsPage() {
             </div>
           </SettingsField>
         </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="mb-4 flex items-center gap-2">
+          <ShieldCheck className="size-4 text-indigo-500" />
+          <h2 className="text-sm font-bold">Recovery</h2>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              Carried debt
+            </p>
+            <p className="mt-2 text-2xl font-bold tabular-nums">
+              {formatHours(debtSeconds)}
+            </p>
+          </div>
+          <SettingsField
+            label="Maximum carried debt"
+            hint="0 = no limit. Lowering this below current debt forgives the excess when saved."
+          >
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                max={168}
+                value={draft.max_debt_hours}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    max_debt_hours: Number(event.target.value),
+                  })
+                }
+                className={cn(inputClass, "w-28 tabular-nums")}
+              />
+              <span className="text-sm text-slate-500 dark:text-slate-400">
+                hours
+              </span>
+            </div>
+          </SettingsField>
+          <SettingsField
+            label="Reset cooldown"
+            hint="Days between debt forgiveness resets."
+          >
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                max={365}
+                value={draft.reset_cooldown_days}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    reset_cooldown_days: Number(event.target.value),
+                  })
+                }
+                className={cn(inputClass, "w-28 tabular-nums")}
+              />
+              <span className="text-sm text-slate-500 dark:text-slate-400">
+                days
+              </span>
+            </div>
+          </SettingsField>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void resetDebt()}
+            disabled={
+              debtSeconds <= 0 ||
+              recovery === null ||
+              !recovery.can_reset ||
+              resetPending
+            }
+            className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200 dark:hover:bg-red-950/70"
+          >
+            {resetPending ? <Spinner /> : <RotateCcw className="size-4" />}
+            Forgive carried debt
+          </button>
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            {debtSeconds <= 0
+              ? recovery?.next_reset_on != null
+                ? `No carried debt. Next reset available on ${formatDate(
+                    recovery.next_reset_on,
+                  )}.`
+                : "No carried debt."
+              : recovery === null
+                ? "Checking cooldown…"
+                : recovery.can_reset
+                  ? "Available now."
+                  : recovery.next_reset_on !== null
+                    ? `Next reset available on ${formatDate(
+                        recovery.next_reset_on,
+                      )}.`
+                    : "Cooldown active."}
+          </span>
+        </div>
+        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+          This clears only the daily carried debt. Study time, history, and
+          checklist progress are kept. The cooldown is enforced by the backend.
+        </p>
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">

@@ -3,6 +3,7 @@ import type {
   ChecklistImportResult,
   ChecklistImportSubject,
   Config,
+  Recovery,
   StateEnvelope,
   StatsResponse,
   StudyPrepConfig,
@@ -116,6 +117,12 @@ export const api = {
       body: JSON.stringify(config),
     }),
   stats: (days = 30) => request<StatsResponse>(`/stats?days=${days}`),
+
+  recovery: () => request<Recovery>("/recovery"),
+  resetDebt: () =>
+    request<{ forgiven_seconds: number; recovery: Recovery }>("/recovery/reset", {
+      method: "POST",
+    }),
 
   start: () => request<void>("/session/start", { method: "POST" }),
   pause: () => request<void>("/session/pause", { method: "POST" }),

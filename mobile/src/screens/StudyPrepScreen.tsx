@@ -33,6 +33,7 @@ import {
   type Tone,
 } from '../components/ui';
 import { useDialog } from '../context/DialogContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext';
 import { useToast } from '../context/ToastContext';
 import { api, preferences } from '../lib/api';
@@ -42,6 +43,8 @@ import {
   formatDateTime,
   formatHours,
 } from '../lib/format';
+import { stageLabel, pluralWord } from '../i18n/labels';
+import type { MessageKey, Translate } from '../i18n';
 import {
   apiBaseUrl,
   isSupportedSource,
@@ -73,16 +76,24 @@ const LANGUAGES: Array<{ value: StudyPrepLanguage; label: string }> = [
 
 const DEPTHS: Array<{
   value: StudyPrepDepth;
-  label: string;
-  hint: string;
+  labelKey: MessageKey;
+  hintKey: MessageKey;
 }> = [
-  { value: 'quick', label: 'Quick', hint: 'A compact pass over the material.' },
+  {
+    value: 'quick',
+    labelKey: 'prep.depth.quick',
+    hintKey: 'prep.depth.quickHint',
+  },
   {
     value: 'balanced',
-    label: 'Balanced',
-    hint: 'Normal detail for an upcoming exam.',
+    labelKey: 'prep.depth.balanced',
+    hintKey: 'prep.depth.balancedHint',
   },
-  { value: 'deep', label: 'Deep', hint: 'More detail and more study time.' },
+  {
+    value: 'deep',
+    labelKey: 'prep.depth.deep',
+    hintKey: 'prep.depth.deepHint',
+  },
 ];
 
 const STATUS_TONES: Record<StudyPrepStatus, Tone> = {
@@ -94,20 +105,61 @@ const STATUS_TONES: Record<StudyPrepStatus, Tone> = {
   interrupted: 'warn',
 };
 
-const STATUS_LABELS: Record<StudyPrepStatus, string> = {
-  queued: 'Queued',
-  running: 'Running',
-  ready: 'Ready',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-  interrupted: 'Interrupted',
+function statusLabel(t: Translate, status: StudyPrepStatus): string {
+  switch (status) {
+    case 'queued':
+      return t('stage.queued');
+    case 'running':
+      return t('timer.running');
+    case 'ready':
+      return t('timer.ready');
+    case 'failed':
+      return t('prep.stageFailed');
+    case 'cancelled':
+      return t('prep.stageCancelled');
+    case 'interrupted':
+      return t('prep.stageInterrupted');
+  }
+}
+
+const ERROR_KEYS: Record<string, MessageKey> = {
+  missing_server: 'prep.error.missingServer',
+  timeout: 'prep.error.timeout',
+  network: 'prep.error.network',
+  provider_not_configured: 'prep.error.provider_not_configured',
+  run_not_found: 'prep.error.run_not_found',
+  run_not_ready: 'prep.error.run_not_ready',
+  run_already_imported: 'prep.error.run_already_imported',
+  run_already_active: 'prep.error.run_already_active',
+  source_extraction_failed: 'prep.error.source_extraction_failed',
+  provider_error: 'prep.error.provider_error',
+  invalid_model_output: 'prep.error.invalid_model_output',
+  invalid_upload: 'prep.error.invalid_upload',
+  study_prep_error: 'prep.error.generic',
 };
 
-function describeError(caught: unknown): string {
+function describeError(caught: unknown, t: Translate): string {
   if (caught instanceof StudyPrepApiError) {
-    return caught.hint ? `${caught.message} ${caught.hint}` : caught.message;
+    if (caught.code === 'http') {
+      return t('prep.error.http', { status: caught.status });
+    }
+    const key = caught.code ? ERROR_KEYS[caught.code] : undefined;
+    if (key) {
+      return t(key);
+    }
+    return caught.hint
+      ? `${caught.message} ${caught.hint}`
+      : caught.message;
   }
   return errorMessage(caught);
+}
+
+function runError(run: StudyPrepRun, t: Translate): string {
+  if (run.error === null) {
+    return statusLabel(t, run.status);
+  }
+  const key = ERROR_KEYS[run.error.code];
+  return key ? t(key) : run.error.message;
 }
 
 function mergeRun(list: StudyPrepRun[], run: StudyPrepRun): StudyPrepRun[] {
@@ -163,6 +215,7 @@ function ErrorCard({
   onRetry?: () => void;
 }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   return (
     <Card
       style={{
@@ -172,7 +225,12 @@ function ErrorCard({
       <Text style={[styles.errorTitle, { color: colors.danger }]}>{title}</Text>
       <Text style={[styles.errorText, { color: colors.danger }]}>{message}</Text>
       {onRetry ? (
-        <Button label="Try again" onPress={onRetry} size="sm" variant="secondary" />
+        <Button
+          label={t('common.tryAgain')}
+          onPress={onRetry}
+          size="sm"
+          variant="secondary"
+        />
       ) : null}
     </Card>
   );
@@ -186,6 +244,7 @@ function FileRow({
   onRemove: () => void;
 }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   return (
     <View style={[styles.fileRow, { borderColor: colors.border }]}>
       <View style={styles.fileMark}>
@@ -204,11 +263,13 @@ function FileRow({
           {file.name}
         </Text>
         <Text style={[styles.fileMeta, { color: colors.textMuted }]}>
-          {file.size === null ? 'Size unavailable' : formatBytes(file.size)}
+          {file.size === null
+            ? t('prep.file.sizeUnavailable')
+            : formatBytes(file.size)}
         </Text>
       </View>
       <Pressable
-        accessibilityLabel={`Remove ${file.name}`}
+        accessibilityLabel={t('prep.file.remove', { name: file.name })}
         hitSlop={8}
         onPress={onRemove}
         style={({ pressed }) => [styles.removeButton, pressed && styles.pressed]}>
@@ -219,8 +280,12 @@ function FileRow({
 }
 
 function RunStatus({ run }: { run: StudyPrepRun }) {
+  const { t } = useLanguage();
   return (
-    <Badge label={STATUS_LABELS[run.status]} tone={STATUS_TONES[run.status]} />
+    <Badge
+      label={statusLabel(t, run.status)}
+      tone={STATUS_TONES[run.status]}
+    />
   );
 }
 
@@ -230,6 +295,7 @@ export function StudyPrepScreen({
   onOpenChecklist: () => void;
 }) {
   const { colors } = useTheme();
+  const { t, language: uiLanguage } = useLanguage();
   const { push } = useToast();
   const { confirm } = useDialog();
 
@@ -355,7 +421,7 @@ export function StudyPrepScreen({
         if (serverRequest.current !== token || serverRef.current !== base) {
           return;
         }
-        const message = describeError(caught);
+        const message = describeError(caught, t);
         setConfigError(message);
         setRunsError(message);
         setConfig(null);
@@ -367,7 +433,7 @@ export function StudyPrepScreen({
         }
       }
     },
-    [],
+    [t],
   );
 
   useEffect(() => {
@@ -385,10 +451,10 @@ export function StudyPrepScreen({
       }
     } catch (caught) {
       if (serverRef.current === base) {
-        setRunsError(describeError(caught));
+        setRunsError(describeError(caught, t));
       }
     }
-  }, []);
+  }, [t]);
 
   const loadResult = useCallback(async (base: string, runId: string) => {
     const token = ++resultRequest.current;
@@ -408,14 +474,14 @@ export function StudyPrepScreen({
         resultRequest.current === token &&
         selectedIdRef.current === runId
       ) {
-        setResultError(describeError(caught));
+        setResultError(describeError(caught, t));
       }
     } finally {
       if (resultRequest.current === token) {
         setResultLoading(false);
       }
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (!serverSaved || selectedId === null) {
@@ -453,11 +519,11 @@ export function StudyPrepScreen({
           setSelectedId(null);
           setDetail(null);
           setResult(null);
-          setRunsError('That preparation was deleted.');
+          setRunsError(t('prep.deleted'));
           void refreshRuns(serverSaved);
           return;
         }
-        setPollError(describeError(caught));
+        setPollError(describeError(caught, t));
         timer = setTimeout(() => void poll(), 3000);
       }
     };
@@ -476,15 +542,15 @@ export function StudyPrepScreen({
         clearTimeout(timer);
       }
     };
-  }, [serverSaved, selectedId, loadResult, refreshRuns]);
+  }, [serverSaved, selectedId, loadResult, refreshRuns, t]);
 
   const connect = async () => {
     const normalized = normalizeServerUrl(server);
     if (!normalized) {
       push({
         kind: 'error',
-        title: 'Server address required',
-        body: 'Enter the address of the computer running the WebStudy backend.',
+        title: t('prep.toast.serverRequiredTitle'),
+        body: t('prep.toast.serverRequiredBody'),
       });
       return;
     }
@@ -535,8 +601,8 @@ export function StudyPrepScreen({
       if (skipped > 0) {
         push({
           kind: 'warning',
-          title: 'Some files were skipped',
-          body: 'Only PDF, PPTX, and Markdown files can be used.',
+          title: t('prep.toast.skippedTitle'),
+          body: t('prep.toast.skippedBody'),
         });
       }
       if (accepted.length > 0) {
@@ -554,7 +620,7 @@ export function StudyPrepScreen({
       }
       push({
         kind: 'error',
-        title: 'Could not open the file picker',
+        title: t('prep.toast.pickerErrorTitle'),
         body: errorMessage(caught),
       });
     }
@@ -564,16 +630,16 @@ export function StudyPrepScreen({
     if (!config?.configured) {
       push({
         kind: 'warning',
-        title: 'The server has no model configured',
-        body: 'Set WEBSTUDY_LLM_MODEL on the server and restart the backend.',
+        title: t('prep.toast.noModelTitle'),
+        body: t('prep.toast.noModelBody'),
       });
       return;
     }
     if (!notes.trim() && files.length === 0) {
       push({
         kind: 'warning',
-        title: 'Add material first',
-        body: 'Write rough notes, attach a source file, or both.',
+        title: t('prep.toast.addMaterialTitle'),
+        body: t('prep.toast.addMaterialBody'),
       });
       return;
     }
@@ -584,8 +650,8 @@ export function StudyPrepScreen({
       if (!Number.isInteger(parsed) || parsed < 10 || parsed > 10_000) {
         push({
           kind: 'error',
-          title: 'Invalid target',
-          body: 'The target must be a whole number between 10 and 10,000 minutes.',
+          title: t('prep.toast.invalidTargetTitle'),
+          body: t('prep.toast.invalidTargetBody'),
         });
         return;
       }
@@ -600,16 +666,20 @@ export function StudyPrepScreen({
     if (files.some(file => file.size !== null && file.size > maxFileBytes)) {
       push({
         kind: 'error',
-        title: 'Source too large',
-        body: `Each file must be at most ${formatBytes(maxFileBytes)}.`,
+        title: t('prep.toast.sourceTooLargeTitle'),
+        body: t('prep.toast.sourceTooLargeBody', {
+          size: formatBytes(maxFileBytes),
+        }),
       });
       return;
     }
     if (knownTotal > maxTotalBytes) {
       push({
         kind: 'error',
-        title: 'Sources too large',
-        body: `All sources together must be at most ${formatBytes(maxTotalBytes)}.`,
+        title: t('prep.toast.sourcesTooLargeTitle'),
+        body: t('prep.toast.sourcesTooLargeBody', {
+          size: formatBytes(maxTotalBytes),
+        }),
       });
       return;
     }
@@ -632,14 +702,14 @@ export function StudyPrepScreen({
       setFiles([]);
       push({
         kind: 'success',
-        title: 'Preparation queued',
-        body: 'Notes and a study plan are being generated on the server.',
+        title: t('prep.toast.queuedTitle'),
+        body: t('prep.toast.queuedBody'),
       });
     } catch (caught) {
       push({
         kind: 'error',
-        title: 'Could not start the preparation',
-        body: describeError(caught),
+        title: t('prep.toast.startError'),
+        body: describeError(caught, t),
       });
     } finally {
       setCreating(false);
@@ -648,10 +718,10 @@ export function StudyPrepScreen({
 
   const cancelRun = async (run: StudyPrepRun) => {
     const ok = await confirm({
-      title: 'Cancel preparation?',
-      message: 'The server will stop generating notes for this run.',
-      confirmLabel: 'Cancel run',
-      cancelLabel: 'Keep running',
+      title: t('prep.confirm.cancelTitle'),
+      message: t('prep.confirm.cancelMessage'),
+      confirmLabel: t('prep.confirm.cancelRun'),
+      cancelLabel: t('prep.confirm.keepRunning'),
       destructive: true,
     });
     if (!ok) {
@@ -668,8 +738,8 @@ export function StudyPrepScreen({
     } catch (caught) {
       push({
         kind: 'error',
-        title: 'Could not cancel the run',
-        body: describeError(caught),
+        title: t('prep.toast.cancelError'),
+        body: describeError(caught, t),
       });
     } finally {
       setPendingAction(false);
@@ -702,8 +772,8 @@ export function StudyPrepScreen({
     } catch (caught) {
       push({
         kind: 'error',
-        title: 'Could not retry the run',
-        body: describeError(caught),
+        title: t('prep.toast.retryError'),
+        body: describeError(caught, t),
       });
     } finally {
       setPendingAction(false);
@@ -712,9 +782,9 @@ export function StudyPrepScreen({
 
   const removeRun = async (run: StudyPrepRun) => {
     const ok = await confirm({
-      title: 'Delete preparation?',
-      message: `Delete "${run.title}" and its stored sources on the server? The checklist is not affected.`,
-      confirmLabel: 'Delete',
+      title: t('prep.confirm.deleteTitle'),
+      message: t('prep.confirm.deleteMessage', { title: run.title }),
+      confirmLabel: t('common.delete'),
       destructive: true,
     });
     if (!ok) {
@@ -731,8 +801,8 @@ export function StudyPrepScreen({
     } catch (caught) {
       push({
         kind: 'error',
-        title: 'Could not delete the run',
-        body: describeError(caught),
+        title: t('prep.toast.deleteError'),
+        body: describeError(caught, t),
       });
     }
   };
@@ -743,14 +813,27 @@ export function StudyPrepScreen({
     }
     const totalItems = result.plan.totals.items;
     const subjectCount = result.plan.totals.subjects;
+    const itemWord = pluralWord(
+      t,
+      totalItems,
+      'common.itemOne',
+      'common.itemOther',
+    );
+    const subjectWord = pluralWord(
+      t,
+      subjectCount,
+      'common.subjectOne',
+      'common.subjectOther',
+    );
     const ok = await confirm({
-      title: 'Import plan?',
-      message: `Add ${totalItems} ${
-        totalItems === 1 ? 'item' : 'items'
-      } in ${subjectCount} ${
-        subjectCount === 1 ? 'subject' : 'subjects'
-      } to this device's checklist. Existing subjects are kept.`,
-      confirmLabel: 'Import',
+      title: t('prep.confirm.importTitle'),
+      message: t('prep.confirm.importMessage', {
+        items: totalItems,
+        itemWord,
+        subjects: subjectCount,
+        subjectWord,
+      }),
+      confirmLabel: t('prep.confirm.import'),
     });
     if (!ok) {
       return;
@@ -776,17 +859,18 @@ export function StudyPrepScreen({
       });
       push({
         kind: 'success',
-        title: 'Checklist updated',
-        body: `Added ${totalItems} ${
-          totalItems === 1 ? 'item' : 'items'
-        } in ${subjectCount} ${
-          subjectCount === 1 ? 'subject' : 'subjects'
-        }.`,
+        title: t('prep.toast.importedTitle'),
+        body: t('prep.toast.importedBody', {
+          items: totalItems,
+          itemWord,
+          subjects: subjectCount,
+          subjectWord,
+        }),
       });
     } catch (caught) {
       push({
         kind: 'error',
-        title: 'Could not import the plan',
+        title: t('prep.toast.importError'),
         body: errorMessage(caught),
       });
     } finally {
@@ -810,7 +894,7 @@ export function StudyPrepScreen({
         <Card style={styles.loadingCard}>
           <Spinner />
           <Text style={[styles.loadingText, { color: colors.textMuted }]}>
-            Loading study prep…
+            {t('prep.loading')}
           </Text>
         </Card>
       </Screen>
@@ -834,7 +918,7 @@ export function StudyPrepScreen({
     selectedRun?.status === 'ready' &&
     tab === 'notes' ? (
       <Pressable
-        accessibilityLabel="Jump to the study plan"
+        accessibilityLabel={t('prep.jumpAccessibility')}
         accessibilityRole="button"
         onPress={jumpToPlan}
         style={({ pressed }) => [
@@ -846,7 +930,7 @@ export function StudyPrepScreen({
           },
         ]}>
         <Text style={[styles.jumpToPlanText, { color: colors.accentText }]}>
-          Jump to plan
+          {t('prep.jumpToPlan')}
         </Text>
         <Text style={[styles.jumpToPlanGlyph, { color: colors.accentText }]}>
           ↓
@@ -860,8 +944,8 @@ export function StudyPrepScreen({
       contentContainerStyle={jumpButton ? styles.withJumpButton : undefined}
       floating={jumpButton}>
       <PageHeader
-        subtitle="Generate polished notes and a deterministic study plan from your material."
-        title="Study Prep"
+        subtitle={t('prep.subtitle')}
+        title={t('prep.title')}
       />
 
       <Card style={styles.section}>
@@ -869,18 +953,22 @@ export function StudyPrepScreen({
           right={
             config !== null ? (
               <Badge
-                label={configured ? 'Provider ready' : 'Setup needed'}
+                label={
+                  configured
+                    ? t('prep.server.providerReady')
+                    : t('prep.server.setupNeeded')
+                }
                 tone={configured ? 'good' : 'warn'}
               />
             ) : undefined
           }
-          subtitle="Notes are generated by the WebStudy backend on your computer, then imported into this device's checklist."
-          title="Server"
+          subtitle={t('prep.server.subtitle')}
+          title={t('prep.server.title')}
         />
         <View style={styles.sectionBody}>
           <Field
-            hint="Use the computer's LAN address, not 127.0.0.1. Example: http://192.168.0.20:8000"
-            label="Backend address">
+            hint={t('prep.server.addressHint')}
+            label={t('prep.server.address')}>
             <ThemedInput
               autoCapitalize="none"
               autoCorrect={false}
@@ -892,14 +980,18 @@ export function StudyPrepScreen({
           </Field>
           <View style={styles.actionRow}>
             <Button
-              label={serverSaved ? 'Reconnect' : 'Connect'}
+              label={
+                serverSaved
+                  ? t('prep.server.reconnect')
+                  : t('prep.server.connect')
+              }
               onPress={() => void connect()}
               pending={configLoading}
               size="sm"
             />
             {serverSaved ? (
               <Button
-                label="Forget"
+                label={t('prep.server.forget')}
                 onPress={() => void forgetServer()}
                 size="sm"
                 variant="ghost"
@@ -922,23 +1014,20 @@ export function StudyPrepScreen({
                 },
               ]}>
               <Text style={[styles.infoText, { color: colors.textMuted }]}>
-                Start the backend on your computer with{' '}
-                <Text style={styles.code}>--host 0.0.0.0</Text>, then enter its
-                Wi-Fi address here. The phone and computer must be on the same
-                network.
+                {t('prep.server.startHint')}
               </Text>
             </View>
           ) : configError !== null ? (
             <ErrorCard
               message={configError}
               onRetry={() => void refreshServer(serverSaved, true)}
-              title="Could not reach the server"
+              title={t('prep.server.unreachable')}
             />
           ) : configLoading && config === null ? (
             <View style={styles.inlineLoading}>
               <Spinner />
               <Text style={[styles.loadingText, { color: colors.textMuted }]}>
-                Connecting…
+                {t('prep.server.connecting')}
               </Text>
             </View>
           ) : config !== null ? (
@@ -959,7 +1048,9 @@ export function StudyPrepScreen({
                   styles.providerTitle,
                   { color: configured ? colors.good : colors.warn },
                 ]}>
-                {configured ? providerLabel : 'No language model configured on the server'}
+                {configured
+                  ? providerLabel
+                  : t('prep.server.noModel')}
               </Text>
               <Text
                 style={[
@@ -967,9 +1058,11 @@ export function StudyPrepScreen({
                   { color: configured ? colors.good : colors.warn },
                 ]}>
                 {configured
-                  ? `Endpoint ${config.base_url} · ${config.context_tokens.toLocaleString()} token context`
-                  : config.message ||
-                    'Set WEBSTUDY_LLM_MODEL on the server, then restart the backend.'}
+                  ? t('prep.server.endpoint', {
+                      url: config.base_url,
+                      tokens: config.context_tokens.toLocaleString(uiLanguage),
+                    })
+                  : t('prep.server.setModel')}
               </Text>
             </View>
           ) : null}
@@ -979,25 +1072,28 @@ export function StudyPrepScreen({
       {config !== null && configured ? (
         <Card style={styles.section}>
           <SectionTitle
-            subtitle="Rough notes, slides, PDFs, or Markdown. Sources are stored on the server under study-prep."
-            title="New preparation"
+            subtitle={t('prep.new.subtitle')}
+            title={t('prep.new.title')}
           />
           <View style={styles.sectionBody}>
             <Field
-              hint={`${notes.length.toLocaleString()} / ${MAX_NOTES_CHARS.toLocaleString()} characters`}
-              label="Rough notes">
+              hint={t('prep.notes.counter', {
+                used: notes.length.toLocaleString(uiLanguage),
+                max: MAX_NOTES_CHARS.toLocaleString(uiLanguage),
+              })}
+              label={t('prep.notes.label')}>
               <ThemedInput
                 maxLength={MAX_NOTES_CHARS}
                 multiline
                 onChangeText={setNotes}
-                placeholder="What did the class cover? What is in scope for the exam?"
+                placeholder={t('prep.notes.placeholder')}
                 style={styles.notesInput}
                 textAlignVertical="top"
                 value={notes}
               />
             </Field>
 
-            <Field label="Language">
+            <Field label={t('prep.language.label')}>
               <View style={styles.chipRow}>
                 {LANGUAGES.map(option => (
                   <ChoiceChip
@@ -1010,36 +1106,42 @@ export function StudyPrepScreen({
               </View>
             </Field>
 
-            <Field label="Depth">
+            <Field label={t('prep.depth.label')}>
               <View style={styles.chipRow}>
                 {DEPTHS.map(option => (
                   <ChoiceChip
                     key={option.value}
-                    label={option.label}
+                    label={t(option.labelKey)}
                     onPress={() => setDepth(option.value)}
                     selected={depth === option.value}
                   />
                 ))}
               </View>
               <Text style={[styles.fieldHint, { color: colors.textFaint }]}>
-                {DEPTHS.find(option => option.value === depth)?.hint}
+                {t(
+                  DEPTHS.find(option => option.value === depth)?.hintKey ??
+                    'prep.depth.balancedHint',
+                )}
               </Text>
             </Field>
 
             <Field
-              hint="Optional. The generated plan is scaled to this total."
-              label="Target minutes">
+              hint={t('prep.target.hint')}
+              label={t('prep.target.label')}>
               <ThemedInput
                 keyboardType="number-pad"
                 onChangeText={value => setTarget(value.replace(/[^0-9]/g, ''))}
-                placeholder="Leave empty for source-based time"
+                placeholder={t('prep.target.placeholder')}
                 value={target}
               />
             </Field>
 
             <Field
-              hint={`PDF, PPTX, or Markdown · up to ${config.max_files} files · ${formatBytes(config.max_file_bytes)} each`}
-              label="Sources">
+              hint={t('prep.sources.hint', {
+                files: config.max_files,
+                size: formatBytes(config.max_file_bytes),
+              })}
+              label={t('prep.sources.label')}>
               {files.length > 0 ? (
                 <View style={styles.fileList}>
                   {files.map((file, index) => (
@@ -1057,7 +1159,7 @@ export function StudyPrepScreen({
               ) : null}
               <Button
                 disabled={files.length >= config.max_files}
-                label="Add source files"
+                label={t('prep.sources.add')}
                 left="+"
                 onPress={() => void addFiles()}
                 size="sm"
@@ -1070,7 +1172,7 @@ export function StudyPrepScreen({
                 (!notes.trim() && files.length === 0) ||
                 files.length > config.max_files
               }
-              label="Generate notes and plan"
+              label={t('prep.generate')}
               onPress={() => void createRun()}
               pending={creating}
             />
@@ -1086,9 +1188,17 @@ export function StudyPrepScreen({
           style={styles.section}>
           <SectionTitle
             right={<RunStatus run={selectedRun} />}
-            subtitle={`${formatDateTime(selectedRun.created_at)} · ${
-              selectedRun.options.depth
-            } · ${selectedRun.options.language}`}
+            subtitle={t('prep.run.subtitle', {
+              date: formatDateTime(selectedRun.created_at, uiLanguage),
+              depth: t(
+                DEPTHS.find(option => option.value === selectedRun.options.depth)
+                  ?.labelKey ?? 'prep.depth.balanced',
+              ),
+              language:
+                LANGUAGES.find(
+                  option => option.value === selectedRun.options.language,
+                )?.label ?? selectedRun.options.language,
+            })}
             title={selectedRun.title}
           />
           <View style={styles.sectionBody}>
@@ -1097,14 +1207,16 @@ export function StudyPrepScreen({
                 <ProgressBar value={selectedRun.progress} max={100} />
                 <View style={styles.progressMeta}>
                   <Text style={[styles.progressText, { color: colors.text }]}>
-                    {selectedRun.stage_detail || 'Working…'}
+                    {selectedRun.stage
+                      ? stageLabel(t, selectedRun.stage)
+                      : selectedRun.stage_detail || t('common.working')}
                   </Text>
                   <Text style={[styles.progressValue, { color: colors.textMuted }]}>
                     {selectedRun.progress}%
                   </Text>
                 </View>
                 <Button
-                  label="Cancel run"
+                  label={t('prep.cancelRun')}
                   onPress={() => void cancelRun(selectedRun)}
                   pending={pendingAction}
                   size="sm"
@@ -1126,10 +1238,10 @@ export function StudyPrepScreen({
                     },
                   ]}>
                   <Text style={[styles.errorTitle, { color: colors.danger }]}>
-                    {selectedRun.error?.message ??
-                      STATUS_LABELS[selectedRun.status]}
+                    {runError(selectedRun, t)}
                   </Text>
-                  {selectedRun.error?.hint ? (
+                  {selectedRun.error?.hint &&
+                  !ERROR_KEYS[selectedRun.error.code] ? (
                     <Text style={[styles.errorText, { color: colors.danger }]}>
                       {selectedRun.error.hint}
                     </Text>
@@ -1137,13 +1249,13 @@ export function StudyPrepScreen({
                 </View>
                 <View style={styles.actionRow}>
                   <Button
-                    label="Retry"
+                    label={t('prep.retry')}
                     onPress={() => void retryRun(selectedRun)}
                     pending={pendingAction}
                     size="sm"
                   />
                   <Button
-                    label="Delete"
+                    label={t('prep.delete')}
                     onPress={() => void removeRun(selectedRun)}
                     size="sm"
                     variant="ghost"
@@ -1181,12 +1293,12 @@ export function StudyPrepScreen({
               <>
                 <View style={styles.tabRow}>
                   <ChoiceChip
-                    label="Notes"
+                    label={t('prep.tab.notes')}
                     onPress={() => setTab('notes')}
                     selected={tab === 'notes'}
                   />
                   <ChoiceChip
-                    label="Plan"
+                    label={t('prep.tab.plan')}
                     onPress={() => setTab('plan')}
                     selected={tab === 'plan'}
                   />
@@ -1197,14 +1309,14 @@ export function StudyPrepScreen({
                     <Spinner />
                     <Text
                       style={[styles.loadingText, { color: colors.textMuted }]}>
-                      Loading the result…
+                      {t('prep.result.loading')}
                     </Text>
                   </View>
                 ) : resultError !== null ? (
                   <ErrorCard
                     message={resultError}
                     onRetry={() => void loadResult(serverSaved, selectedRun.id)}
-                    title="Could not load the result"
+                    title={t('prep.result.error')}
                   />
                 ) : result !== null && tab === 'notes' ? (
                   <View
@@ -1224,9 +1336,23 @@ export function StudyPrepScreen({
                 ) : result !== null && tab === 'plan' ? (
                   <View style={styles.plan}>
                     <Text style={[styles.planMeta, { color: colors.textMuted }]}>
-                      {result.plan.totals.subjects} subjects ·{' '}
-                      {result.plan.totals.items} items ·{' '}
-                      {formatHours(result.plan.totals.duration_seconds)}
+                      {t('prep.plan.meta', {
+                        subjects: `${result.plan.totals.subjects} ${pluralWord(
+                          t,
+                          result.plan.totals.subjects,
+                          'common.subjectOne',
+                          'common.subjectOther',
+                        )}`,
+                        items: `${result.plan.totals.items} ${pluralWord(
+                          t,
+                          result.plan.totals.items,
+                          'common.itemOne',
+                          'common.itemOther',
+                        )}`,
+                        duration: formatHours(
+                          result.plan.totals.duration_seconds,
+                        ),
+                      })}
                     </Text>
                     {result.plan.warnings.map(warning => (
                       <Text
@@ -1284,10 +1410,10 @@ export function StudyPrepScreen({
                         ]}>
                         <Text
                           style={[styles.importedText, { color: colors.good }]}>
-                          This plan is already in your checklist.
+                          {t('prep.plan.alreadyImported')}
                         </Text>
                         <Button
-                          label="Open checklist"
+                          label={t('prep.openChecklist')}
                           onPress={onOpenChecklist}
                           size="sm"
                           variant="secondary"
@@ -1295,7 +1421,7 @@ export function StudyPrepScreen({
                       </View>
                     ) : (
                       <Button
-                        label="Import plan to checklist"
+                        label={t('prep.importPlan')}
                         onPress={() => void importPlan()}
                         pending={importing}
                       />
@@ -1311,7 +1437,7 @@ export function StudyPrepScreen({
             selectedRun.status !== 'cancelled' &&
             selectedRun.status !== 'interrupted' ? (
               <Text style={[styles.loadingText, { color: colors.textMuted }]}>
-                Waiting for the server…
+                {t('prep.waiting')}
               </Text>
             ) : null}
           </View>
@@ -1323,41 +1449,41 @@ export function StudyPrepScreen({
           right={
             serverSaved ? (
               <Button
-                label="Refresh"
+                label={t('prep.history.refresh')}
                 onPress={() => void refreshServer(serverSaved)}
                 size="sm"
                 variant="ghost"
               />
             ) : undefined
           }
-          subtitle="Runs stored by the server under state_dir()/study-prep."
-          title="History"
+          subtitle={t('prep.history.subtitle')}
+          title={t('prep.history.title')}
         />
         <View style={styles.sectionBody}>
           {!serverSaved ? (
             <EmptyState
               mark="◇"
-              message="Connect to the WebStudy backend to see previous preparations."
-              title="No server connected"
+              message={t('prep.history.noServerMessage')}
+              title={t('prep.history.noServerTitle')}
             />
           ) : runsLoading && runs.length === 0 ? (
             <View style={styles.inlineLoading}>
               <Spinner />
               <Text style={[styles.loadingText, { color: colors.textMuted }]}>
-                Loading history…
+                {t('prep.history.loading')}
               </Text>
             </View>
           ) : runsError !== null && runs.length === 0 ? (
             <ErrorCard
               message={runsError}
               onRetry={() => void refreshServer(serverSaved, true)}
-              title="Could not load history"
+              title={t('prep.history.error')}
             />
           ) : runs.length === 0 ? (
             <EmptyState
               mark="✦"
-              message="Start a preparation above and it will appear here."
-              title="Nothing prepared yet"
+              message={t('prep.history.emptyMessage')}
+              title={t('prep.history.emptyTitle')}
             />
           ) : (
             <View style={styles.runList}>
@@ -1384,13 +1510,17 @@ export function StudyPrepScreen({
                       <Text
                         numberOfLines={1}
                         style={[styles.runMeta, { color: colors.textMuted }]}>
-                        {formatDateTime(run.created_at)} ·{' '}
-                        {run.stage_detail || STATUS_LABELS[run.status]}
+                        {formatDateTime(run.created_at, uiLanguage)} ·{' '}
+                        {run.stage
+                          ? stageLabel(t, run.stage)
+                          : statusLabel(t, run.status)}
                       </Text>
                     </View>
                     <RunStatus run={run} />
                     <Pressable
-                      accessibilityLabel={`Delete ${run.title}`}
+                      accessibilityLabel={t('prep.deleteAccessibility', {
+                        name: run.title,
+                      })}
                       hitSlop={8}
                       onPress={() => void removeRun(run)}
                       style={({ pressed }) => [

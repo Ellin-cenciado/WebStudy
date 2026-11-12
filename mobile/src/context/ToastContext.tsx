@@ -17,6 +17,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useLanguage } from './LanguageContext';
 import { useTheme, type Palette } from './ThemeContext';
 
 export type ToastKind = 'info' | 'success' | 'warning' | 'error';
@@ -82,6 +83,7 @@ function toastText(colors: Palette, kind: ToastKind): string {
 
 function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const { title, body, kind } = toast;
   const color = toastText(colors, kind);
   return (
@@ -96,7 +98,7 @@ function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
         ) : null}
       </View>
       <Pressable
-        accessibilityLabel="Dismiss notification"
+        accessibilityLabel={t('common.dismissNotification')}
         hitSlop={10}
         onPress={onDismiss}
         style={styles.toastClose}>

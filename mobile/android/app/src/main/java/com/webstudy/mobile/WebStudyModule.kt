@@ -34,6 +34,18 @@ class WebStudyModule(private val reactContext: ReactApplicationContext) :
     override fun getName(): String = NAME
 
     @ReactMethod
+    fun getLocale(promise: Promise) {
+        try {
+            val locales = reactContext.resources.configuration.locales
+            val tag = if (locales.isEmpty) "en" else locales[0].toLanguageTag()
+            promise.resolve(tag)
+        } catch (error: Throwable) {
+            Log.e(TAG, "Could not read the system locale", error)
+            promise.resolve("en")
+        }
+    }
+
+    @ReactMethod
     fun getPreference(key: String, promise: Promise) {
         val prefs = reactContext.getSharedPreferences("webstudy", 0)
         promise.resolve(prefs.getString(key, null))
@@ -43,6 +55,9 @@ class WebStudyModule(private val reactContext: ReactApplicationContext) :
     fun setPreference(key: String, value: String, promise: Promise) {
         val prefs = reactContext.getSharedPreferences("webstudy", 0)
         prefs.edit().putString(key, value).apply()
+        if (key == "language") {
+            TimerNotifications.ensureChannels(reactContext)
+        }
         promise.resolve(null)
     }
 

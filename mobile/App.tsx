@@ -7,6 +7,7 @@ import {
 import { TabBar, type Tab } from './src/components/TabBar';
 import { ConfigProvider } from './src/context/ConfigContext';
 import { DialogProvider } from './src/context/DialogContext';
+import { LanguageProvider, useLanguage } from './src/context/LanguageContext';
 import { LiveProvider, useLive } from './src/context/LiveContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import { ToastProvider } from './src/context/ToastContext';
@@ -19,6 +20,7 @@ import { TimerScreen } from './src/screens/TimerScreen';
 function Shell() {
   const [tab, setTab] = useState<Tab>('timer');
   const { colors, theme, toggle } = useTheme();
+  const { t } = useLanguage();
   const { connected, error } = useLive();
 
   return (
@@ -39,7 +41,7 @@ function Shell() {
                 MobileStudy
               </Text>
               <Text style={[styles.brandSubtitle, { color: colors.textMuted }]}>
-                carry-over study tracker
+                {t('app.subtitle')}
               </Text>
             </View>
           </View>
@@ -65,12 +67,14 @@ function Shell() {
                   styles.connectionText,
                   { color: connected ? colors.good : colors.danger },
                 ]}>
-                {connected ? 'Live' : 'Offline'}
+                {connected ? t('app.live') : t('app.offline')}
               </Text>
             </View>
             <Pressable
               accessibilityLabel={
-                theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'
+                theme === 'dark'
+                  ? t('app.switchToLight')
+                  : t('app.switchToDark')
               }
               hitSlop={8}
               onPress={toggle}
@@ -119,17 +123,19 @@ function Shell() {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <ThemeProvider>
-        <ToastProvider>
-          <DialogProvider>
-            <ConfigProvider>
-              <LiveProvider>
-                <Shell />
-              </LiveProvider>
-            </ConfigProvider>
-          </DialogProvider>
-        </ToastProvider>
-      </ThemeProvider>
+      <LanguageProvider>
+        <ThemeProvider>
+          <ToastProvider>
+            <DialogProvider>
+              <ConfigProvider>
+                <LiveProvider>
+                  <Shell />
+                </LiveProvider>
+              </ConfigProvider>
+            </DialogProvider>
+          </ToastProvider>
+        </ThemeProvider>
+      </LanguageProvider>
     </SafeAreaProvider>
   );
 }

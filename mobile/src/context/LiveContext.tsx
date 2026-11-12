@@ -28,6 +28,7 @@ import type {
   StateEnvelope,
 } from '../lib/types';
 import { useConfig } from './ConfigContext';
+import { useLanguage } from './LanguageContext';
 import { useToast } from './ToastContext';
 
 export type NotificationPermission = 'granted' | 'denied' | 'unknown';
@@ -59,6 +60,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     useState<NotificationPermission>('unknown');
   const { config } = useConfig();
   const { push } = useToast();
+  const { t } = useLanguage();
   const notificationsEnabled = useRef(config?.notifications ?? true);
   const stateRef = useRef<StateEnvelope | null>(null);
   const serviceWanted = useRef(false);
@@ -247,8 +249,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       if (after.logical_day !== before.logicalDay) {
         push({
           kind: 'info',
-          title: 'New study day',
-          body: 'The day rolled over while you were away.',
+          title: t('live.newDayTitle'),
+          body: t('live.newDayBody'),
         });
         return;
       }
@@ -291,7 +293,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       }
       subscription.remove();
     };
-  }, [refresh, push]);
+  }, [refresh, push, t]);
 
   const value = useMemo(
     () => ({

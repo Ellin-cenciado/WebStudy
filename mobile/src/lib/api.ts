@@ -12,6 +12,7 @@ type Envelope<T> = { ok: true; data: T } | { ok: false; error: string };
 
 type NativeBridge = {
   dispatch(method: string, payload: string): Promise<string>;
+  getLocale(): Promise<string | null>;
   getPreference(key: string): Promise<string | null>;
   setPreference(key: string, value: string): Promise<null>;
   startTimerService(): Promise<null>;
@@ -46,6 +47,8 @@ async function dispatch<T>(
 
 export const api = {
   poll: () => dispatch<PollPayload>('poll'),
+  setLanguage: (language: string) =>
+    dispatch<{ language: string }>('setLanguage', { language }),
   config: () => dispatch<Config>('config'),
   saveConfig: (config: Config) =>
     dispatch<Config>('saveConfig', {
@@ -167,3 +170,6 @@ export const preferences = {
   set: (key: string, value: string) =>
     native?.setPreference(key, value) ?? Promise.resolve(null),
 };
+
+export const systemLocale = (): Promise<string | null> =>
+  native?.getLocale ? native.getLocale() : Promise.resolve(null);

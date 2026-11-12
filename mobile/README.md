@@ -137,6 +137,18 @@ debt** clears the current daily debt without erasing study time, history, or
 checklist progress; the next reset is unavailable until the cooldown passes.
 The cooldown is persisted in the tracker state, so it survives app restarts.
 
+## Language
+
+**Settings → Language** offers **System**, **English**, and **Español**
+(rioplatense). The choice is stored in app-private preferences, applies without
+a restart, and is remembered across launches. **System** follows the Android
+locale, so Spanish devices start in Spanish automatically.
+
+The selection also localizes the background timer notification, its
+Pause/Skip actions, and the alert notifications emitted by the embedded engine.
+Study Prep's generated output has its own **Language** selector and remains
+independent (default: **Auto**, matching the source material).
+
 ## Architecture
 
 ```text

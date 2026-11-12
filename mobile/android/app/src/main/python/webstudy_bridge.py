@@ -10,11 +10,12 @@ from __future__ import annotations
 import json
 import os
 import threading
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 _lock = threading.RLock()
 _service = None
+_language = "en"
 _pending_events: list[dict] = []
 _MAX_PENDING_EVENTS = 100
 
@@ -27,12 +28,91 @@ def _error(message: str):
     return json.dumps({"ok": False, "error": message})
 
 
+def _format_hours(seconds) -> str:
+    total = max(0, int(seconds or 0))
+    hours, remainder = divmod(total, 3600)
+    minutes = remainder // 60
+    return f"{hours} h {minutes:02d} min"
+
+
+def _format_date(value) -> str:
+    try:
+        return date.fromisoformat(str(value)).strftime("%d/%m/%Y")
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _localized_event(event) -> tuple[str, str]:
+    if _language != "es":
+        return event.summary, event.body
+    params = getattr(event, "params", None) or {}
+    kind = event.kind
+    if kind == "subject_complete":
+        subject = str(params.get("subject", "La materia"))
+        rest = int(params.get("rest_seconds", 0) or 0)
+        if rest > 0:
+            minutes = max(1, round(rest / 60))
+            return (
+                f"{subject} completa",
+                f"Tomate un descanso de {minutes} minutos.",
+            )
+        return (
+            f"{subject} completa",
+            "Buen trabajo: el objetivo de hoy está cumplido.",
+        )
+    if kind == "debt_reset":
+        return (
+            "Deuda arrastrada perdonada",
+            (
+                f"Se borraron {_format_hours(params.get('forgiven_seconds'))}. "
+                "Próximo reinicio disponible el "
+                f"{_format_date(params.get('next_reset_on'))}."
+            ),
+        )
+    if kind == "day_complete":
+        return (
+            "Día completo",
+            "Terminaste el objetivo de estudio de hoy. ¡Buen trabajo!",
+        )
+    if kind == "item_expired":
+        return (
+            f"Se acabó el tiempo: {params.get('item', 'Ítem')}",
+            "El ítem está en tiempo excedido; ahora cuenta hacia arriba.",
+        )
+    if kind == "debt_capped":
+        return (
+            "Deuda limitada",
+            (
+                f"Se perdonaron {_format_hours(params.get('forgiven_seconds'))} "
+                "de deuda arrastrada para mantenerla en "
+                f"{_format_hours(params.get('cap_seconds'))}."
+            ),
+        )
+    if kind == "phase":
+        if params.get("phase") == "break":
+            minutes = int(params.get("minutes", 0) or 0)
+            return "Hora de una pausa", f"Tomate {minutes} minutos."
+        return "Volvemos a estudiar", "Se terminó la pausa. ¡Vamos!"
+    if kind == "day_rolled":
+        required = _format_hours(params.get("required_seconds"))
+        debt = int(params.get("debt_seconds", 0) or 0)
+        carried = (
+            f"Se arrastraron {_format_hours(debt)}."
+            if debt > 0
+            else "No se arrastró nada."
+        )
+        return "Empezó un nuevo día", f"Objetivo de hoy: {required}. {carried}"
+    return event.summary, event.body
+
+
 def _event_dict(event):
+    summary, body = _localized_event(event)
     return {
         "kind": event.kind,
-        "summary": event.summary,
-        "body": event.body,
+        "summary": summary,
+        "body": body,
         "urgent": event.urgent,
+        "params": getattr(event, "params", None) or {},
     }
 
 
@@ -87,7 +167,26 @@ def _snapshot_payload(service):
 def _notification_payload(service):
     snapshot = service.snapshot()
     item = service.checklist.active_item()
-    if snapshot.day_complete:
+    if _language == "es":
+        if snapshot.day_complete:
+            title = "Día completo"
+            body = "Terminaste el objetivo de estudio de hoy."
+        elif snapshot.is_vacation:
+            title = "Vacaciones"
+            body = "Hoy no hay que estudiar. La deuda se conserva."
+        elif snapshot.is_free_day:
+            title = "Día libre"
+            body = "Hoy no hay que estudiar."
+        elif not snapshot.running:
+            title = "Cronómetro en pausa"
+            body = "Abrí WebStudy para continuar."
+        elif snapshot.phase == "break":
+            title = "Pausa"
+            body = item.text if item is not None else "Tomate un momento."
+        else:
+            title = "Estudiando"
+            body = item.text if item is not None else "Seguí así."
+    elif snapshot.day_complete:
         title = "Day complete"
         body = "Today's study goal is finished."
     elif snapshot.is_vacation:
@@ -359,6 +458,11 @@ def dispatch(method: str, payload_json: str | None = None) -> str:
         with _lock:
             if method == "init":
                 return init(str(payload.get("home", "")))
+            if method == "setLanguage":
+                global _language
+                language = str(payload.get("language", "en")).lower()
+                _language = "es" if language.startswith("es") else "en"
+                return _ok({"language": _language})
             if _service is None:
                 return _error("The study engine is not initialized.")
 

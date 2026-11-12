@@ -67,6 +67,9 @@ class TimerService : Service() {
         TimerNotifications.ensureChannels(this)
     }
 
+    private fun tr(english: String, spanish: String): String =
+        if (AppLanguage.isSpanish(this)) spanish else english
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action ?: ACTION_START
         if (action == ACTION_STOP) {
@@ -155,8 +158,12 @@ class TimerService : Service() {
                         Log.e(TAG, "Timer pause failed", error)
                         TimerNotifications.postAlert(
                             this,
-                            "Could not pause the timer",
-                            error.message ?: "Open WebStudy and try again.",
+                            tr("Could not pause the timer", "No se pudo pausar el cronómetro"),
+                            error.message
+                                ?: tr(
+                                    "Open WebStudy and try again.",
+                                    "Abrí WebStudy y probá de nuevo.",
+                                ),
                             true,
                         )
                         startTimer()
@@ -180,8 +187,12 @@ class TimerService : Service() {
                         Log.e(TAG, "Timer skip failed", error)
                         TimerNotifications.postAlert(
                             this,
-                            "Could not skip the phase",
-                            error.message ?: "Open WebStudy and try again.",
+                            tr("Could not skip the phase", "No se pudo saltar la fase"),
+                            error.message
+                                ?: tr(
+                                    "Open WebStudy and try again.",
+                                    "Abrí WebStudy y probá de nuevo.",
+                                ),
                             true,
                         )
                         startTimer()

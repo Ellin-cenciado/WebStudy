@@ -65,6 +65,7 @@ def event_response(event: Event) -> EventResponse:
         summary=event.summary,
         body=event.body,
         urgent=event.urgent,
+        params=event.params,
     )
 
 

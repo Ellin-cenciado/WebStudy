@@ -19,6 +19,9 @@ object TimerNotifications {
 
     private val alertSequence = AtomicInteger(4200)
 
+    private fun tr(context: Context, english: String, spanish: String): String =
+        if (AppLanguage.isSpanish(context)) spanish else english
+
     fun ensureChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             return
@@ -28,10 +31,15 @@ object TimerNotifications {
         val ongoing =
             NotificationChannel(
                 CHANNEL_ONGOING,
-                "Study timer",
+                tr(context, "Study timer", "Cronómetro de estudio"),
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = "Ongoing timer while a study session runs in the background"
+                description =
+                    tr(
+                        context,
+                        "Ongoing timer while a study session runs in the background",
+                        "Cronómetro visible mientras corre una sesión en segundo plano",
+                    )
                 setShowBadge(false)
                 enableVibration(false)
                 setSound(null, null)
@@ -40,10 +48,15 @@ object TimerNotifications {
         val alerts =
             NotificationChannel(
                 CHANNEL_ALERTS,
-                "Study alerts",
+                tr(context, "Study alerts", "Avisos de estudio"),
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
-                description = "Phase changes, rest, item expiry, and day completion"
+                description =
+                    tr(
+                        context,
+                        "Phase changes, rest, item expiry, and day completion",
+                        "Cambios de fase, descansos, fin de tiempo y día completo",
+                    )
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
         manager.createNotificationChannels(listOf(ongoing, alerts))
@@ -51,8 +64,14 @@ object TimerNotifications {
 
     fun starting(context: Context): Notification =
         baseBuilder(context, CHANNEL_ONGOING)
-            .setContentTitle("Study timer")
-            .setContentText("Starting the background timer…")
+            .setContentTitle(tr(context, "Study timer", "Cronómetro de estudio"))
+            .setContentText(
+                tr(
+                    context,
+                    "Starting the background timer…",
+                    "Iniciando el cronómetro en segundo plano…",
+                ),
+            )
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_STOPWATCH)
@@ -64,7 +83,11 @@ object TimerNotifications {
     fun updateOngoing(context: Context, payload: JSONObject) {
         val running = payload.optBoolean("running", false)
         val remaining = payload.optLong("remaining_seconds", 0L)
-        val title = payload.optString("title", "Study timer")
+        val title =
+            payload.optString(
+                "title",
+                tr(context, "Study timer", "Cronómetro de estudio"),
+            )
         val body = payload.optString("body", "")
         val builder =
             baseBuilder(context, CHANNEL_ONGOING)
@@ -89,12 +112,12 @@ object TimerNotifications {
         if (running) {
             builder.addAction(
                 android.R.drawable.ic_media_pause,
-                "Pause",
+                tr(context, "Pause", "Pausar"),
                 serviceAction(context, TimerService.ACTION_PAUSE, 1),
             )
             builder.addAction(
                 android.R.drawable.ic_media_next,
-                "Skip",
+                tr(context, "Skip", "Saltar"),
                 serviceAction(context, TimerService.ACTION_SKIP, 2),
             )
         }
@@ -107,8 +130,14 @@ object TimerNotifications {
     fun updateOngoingError(context: Context) {
         val builder =
             baseBuilder(context, CHANNEL_ONGOING)
-                .setContentTitle("Study timer")
-                .setContentText("Reconnecting to the study engine…")
+                .setContentTitle(tr(context, "Study timer", "Cronómetro de estudio"))
+                .setContentText(
+                    tr(
+                        context,
+                        "Reconnecting to the study engine…",
+                        "Reconectando con el motor de estudio…",
+                    ),
+                )
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setCategory(NotificationCompat.CATEGORY_STOPWATCH)
@@ -126,7 +155,11 @@ object TimerNotifications {
         }
         val builder =
             baseBuilder(context, CHANNEL_ALERTS)
-                .setContentTitle(summary.ifBlank { "Study alert" })
+                .setContentTitle(
+                    summary.ifBlank {
+                        tr(context, "Study alert", "Aviso de estudio")
+                    },
+                )
                 .setContentText(body)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(body))
                 .setAutoCancel(true)

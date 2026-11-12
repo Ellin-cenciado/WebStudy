@@ -24,27 +24,24 @@ export function formatHours(totalSeconds: number): string {
   return `${sign}${hours}h ${String(minutes).padStart(2, '0')}m`;
 }
 
-export function formatDate(isoDate: string): string {
+export function formatDate(isoDate: string, locale = 'en'): string {
   const [year, month, day] = isoDate.split('-').map(Number);
   const date = new Date(year, month - 1, day);
-  return date.toLocaleDateString(undefined, {
+  return date.toLocaleDateString(locale, {
     month: 'short',
     day: 'numeric',
     weekday: 'short',
   });
 }
 
-export function formatTimestamp(isoTimestamp: string): string {
+export function formatTimestamp(isoTimestamp: string, locale = 'en'): string {
   const date = new Date(isoTimestamp);
-  return date.toLocaleTimeString(undefined, {
+  return date.toLocaleTimeString(locale, {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
+    hour12: locale.startsWith('es') ? false : undefined,
   });
-}
-
-export function formatWeekday(weekday: string): string {
-  return weekday.charAt(0).toUpperCase() + weekday.slice(1);
 }
 
 export function formatBytes(bytes: number): string {
@@ -60,24 +57,18 @@ export function formatBytes(bytes: number): string {
   return `${index === 0 ? Math.round(value) : value.toFixed(value >= 10 ? 0 : 1)} ${units[index]}`;
 }
 
-export function formatDateTime(isoTimestamp: string): string {
+export function formatDateTime(isoTimestamp: string, locale = 'en'): string {
   const date = new Date(isoTimestamp);
   if (Number.isNaN(date.getTime())) {
     return isoTimestamp;
   }
-  return date.toLocaleString(undefined, {
+  return date.toLocaleString(locale, {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    hour12: locale.startsWith('es') ? false : undefined,
   });
-}
-
-export function titleCase(value: string): string {
-  return value
-    .split('_')
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
 }
 
 export function errorMessage(error: unknown): string {

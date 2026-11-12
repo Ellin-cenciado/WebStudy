@@ -332,6 +332,10 @@ class StudyService:
                         summary=f"{subject.name} complete",
                         body="Take a 5-minute rest.",
                         urgent=True,
+                        params={
+                            "subject": subject.name,
+                            "rest_seconds": SUBJECT_REST_SECONDS,
+                        },
                     )
                 )
             else:
@@ -346,6 +350,10 @@ class StudyService:
                         summary=f"{subject.name} complete",
                         body="Nice work - today's goal is done.",
                         urgent=True,
+                        params={
+                            "subject": subject.name,
+                            "rest_seconds": 0,
+                        },
                     )
                 )
         self._checklist_changed()
@@ -472,6 +480,10 @@ class StudyService:
                     f"{format_hours(forgiven)} cleared. "
                     f"Next reset available on {next_reset.isoformat()}."
                 ),
+                params={
+                    "forgiven_seconds": forgiven,
+                    "next_reset_on": next_reset.isoformat(),
+                },
             )
         )
         return ResetOutcome(
@@ -575,6 +587,7 @@ class StudyService:
             kind="item_expired",
             summary=f"Time's up: {text}",
             body="The item is now in overrun; it is counting up.",
+            params={"item": text},
         )
 
     # -- persistence / history -----------------------------------------
@@ -636,6 +649,10 @@ class StudyService:
                 f"{format_hours(forgiven)} of carried debt was forgiven "
                 f"to keep it at {cap}."
             ),
+            params={
+                "forgiven_seconds": forgiven,
+                "cap_seconds": self.tracker.max_debt_seconds,
+            },
         )
 
     def _debt_cap_events(self, settled: list[SettledDay]) -> list[Event]:
@@ -684,11 +701,13 @@ class StudyService:
                 kind="phase",
                 summary="Break time",
                 body=f"Step away for {length} minutes.",
+                params={"phase": "break", "minutes": length},
             )
         return Event(
             kind="phase",
             summary="Back to studying",
             body="Break's over - let's go.",
+            params={"phase": "study"},
         )
 
     def _day_rolled_event(self, day: SettledDay) -> Event:
@@ -701,6 +720,10 @@ class StudyService:
             kind="day_rolled",
             summary="A new day has started",
             body=f"Today's goal: {format_hours(self.tracker.required_seconds)}. {body}",
+            params={
+                "debt_seconds": debt,
+                "required_seconds": self.tracker.required_seconds,
+            },
         )
 
     def _emit(self, events: list[Event]) -> None:

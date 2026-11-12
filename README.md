@@ -28,6 +28,9 @@ checklist, and history rules; React only renders state and sends commands.
   separate server or terminal is needed.
 - Ships as a native Android app with the Python engine embedded via Chaquopy;
   it works fully offline and does not start a local server.
+- Offers an English/Spanish interface on Android with a language selector that
+  can follow the system locale; the choice also localizes background-timer
+  notifications and lock-screen actions.
 
 ## Layout
 

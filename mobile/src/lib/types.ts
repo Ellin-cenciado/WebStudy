@@ -49,6 +49,7 @@ export interface ServiceEvent {
   summary: string;
   body: string;
   urgent: boolean;
+  params?: Record<string, unknown>;
 }
 
 export interface ChecklistItem {

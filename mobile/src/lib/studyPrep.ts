@@ -121,7 +121,9 @@ async function request<T>(
 ): Promise<T> {
   const base = apiBaseUrl(server);
   if (!base) {
-    throw new StudyPrepApiError('Enter the WebStudy server address.', 0);
+    throw new StudyPrepApiError('Enter the WebStudy server address.', 0, {
+      code: 'missing_server',
+    });
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -142,7 +144,12 @@ async function request<T>(
         details.message ??
           `The server returned ${response.status} ${response.statusText}.`,
         response.status,
-        { code: details.code, hint: details.hint },
+        {
+          code:
+            details.code ??
+            (details.message === null ? 'http' : null),
+          hint: details.hint,
+        },
       );
     }
     if (response.status === 204) {
@@ -157,13 +164,17 @@ async function request<T>(
       throw new StudyPrepApiError(
         'The WebStudy server did not answer in time.',
         0,
-        { hint: 'Check that the server is running and on the same network.' },
+        {
+          code: 'timeout',
+          hint: 'Check that the server is running and on the same network.',
+        },
       );
     }
     throw new StudyPrepApiError(
       'Could not reach the WebStudy server.',
       0,
       {
+        code: 'network',
         hint: 'Check the address, Wi-Fi connection, and that the backend is running with --host 0.0.0.0.',
       },
     );

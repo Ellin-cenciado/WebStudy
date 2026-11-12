@@ -15,11 +15,14 @@ import {
   ToggleRow,
 } from '../components/ui';
 import { useConfig } from '../context/ConfigContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useLive } from '../context/LiveContext';
 import { useTheme, type ThemePreference } from '../context/ThemeContext';
 import { useToast } from '../context/ToastContext';
 import { api } from '../lib/api';
-import { errorMessage, formatDate, formatHours, titleCase } from '../lib/format';
+import { errorMessage, formatDate, formatHours } from '../lib/format';
+import { modeLabel, weekdayLabel } from '../i18n/labels';
+import type { LanguagePreference, MessageKey } from '../i18n';
 import {
   DAY_MODES,
   WEEKDAYS,
@@ -29,16 +32,19 @@ import {
   type WeekdayName,
 } from '../lib/types';
 
-const MODE_HELP: Record<DayMode, string> = {
-  carried: 'Unmet required time carries into the next day.',
-  optional: 'A goal only; unmet time is discarded.',
-  free: 'No requirement. Existing debt is preserved.',
-};
+const THEME_OPTIONS: Array<{ value: ThemePreference; labelKey: MessageKey }> = [
+  { value: 'system', labelKey: 'settings.appearance.system' },
+  { value: 'light', labelKey: 'settings.appearance.light' },
+  { value: 'dark', labelKey: 'settings.appearance.dark' },
+];
 
-const THEME_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
-  { value: 'system', label: 'System' },
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
+const LANGUAGE_OPTIONS: Array<{
+  value: LanguagePreference;
+  labelKey: MessageKey;
+}> = [
+  { value: 'system', labelKey: 'settings.language.system' },
+  { value: 'en', labelKey: 'settings.language.english' },
+  { value: 'es', labelKey: 'settings.language.spanish' },
 ];
 
 function cloneConfig(config: Config): Config {
@@ -100,7 +106,14 @@ function SettingsSection({
 
 export function SettingsScreen() {
   const { config, loading, error, refresh, save } = useConfig();
-  const { colors, preference, setPreference } = useTheme();
+  const { colors, preference: themePreference, setPreference: setThemePreference } =
+    useTheme();
+  const {
+    preference: languagePreference,
+    setPreference: setLanguagePreference,
+    t,
+    language,
+  } = useLanguage();
   const { push } = useToast();
   const {
     state,
@@ -190,16 +203,16 @@ export function SettingsScreen() {
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(draft.boundary.trim())) {
       push({
         kind: 'error',
-        title: 'Invalid day boundary',
-        body: 'Use 24-hour time in HH:MM format, for example 04:00.',
+        title: t('settings.invalidBoundaryTitle'),
+        body: t('settings.invalidBoundaryBody'),
       });
       return;
     }
     if (draft.study_minutes < 1 || draft.break_minutes < 1) {
       push({
         kind: 'error',
-        title: 'Invalid phase length',
-        body: 'Study and break phases must be at least one minute.',
+        title: t('settings.invalidPhaseTitle'),
+        body: t('settings.invalidPhaseBody'),
       });
       return;
     }
@@ -211,16 +224,16 @@ export function SettingsScreen() {
     ) {
       push({
         kind: 'error',
-        title: 'Invalid vacation range',
-        body: 'The vacation end date must be on or after the start date.',
+        title: t('settings.invalidVacationTitle'),
+        body: t('settings.invalidVacationBody'),
       });
       return;
     }
     if (draft.reset_cooldown_days < 1) {
       push({
         kind: 'error',
-        title: 'Invalid reset cooldown',
-        body: 'The reset cooldown must be at least one day.',
+        title: t('settings.invalidCooldownTitle'),
+        body: t('settings.invalidCooldownBody'),
       });
       return;
     }
@@ -228,11 +241,11 @@ export function SettingsScreen() {
     try {
       await save({ ...draft, boundary: draft.boundary.trim() });
       await refreshRecovery();
-      push({ kind: 'success', title: 'Settings saved' });
+      push({ kind: 'success', title: t('settings.saved') });
     } catch (caught) {
       push({
         kind: 'error',
-        title: 'Could not save settings',
+        title: t('settings.saveError'),
         body: errorMessage(caught),
       });
     } finally {
@@ -252,7 +265,7 @@ export function SettingsScreen() {
     } catch (caught) {
       push({
         kind: 'error',
-        title: 'Could not reset debt',
+        title: t('settings.resetDebtError'),
         body: errorMessage(caught),
       });
     } finally {
@@ -265,14 +278,15 @@ export function SettingsScreen() {
       return;
     }
     Alert.alert(
-      'Forgive carried debt?',
-      `This clears ${formatHours(debtSeconds)} of carried debt. Study time, history, and checklist progress are kept. The cooldown is ${
-        recovery.cooldown_days
-      } days.`,
+      t('settings.resetTitle'),
+      t('settings.resetMessage', {
+        hours: formatHours(debtSeconds),
+        days: recovery.cooldown_days,
+      }),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Forgive',
+          text: t('settings.forgive'),
           style: 'destructive',
           onPress: () => void resetDebt(),
         },
@@ -286,7 +300,7 @@ export function SettingsScreen() {
         <Card style={styles.loadingCard}>
           <Spinner />
           <Text style={[styles.loadingText, { color: colors.textMuted }]}>
-            Loading settings…
+            {t('settings.loading')}
           </Text>
         </Card>
       </Screen>
@@ -296,17 +310,21 @@ export function SettingsScreen() {
   if (error !== null && config === null) {
     return (
       <Screen>
-        <PageHeader title="Settings" />
+        <PageHeader title={t('settings.errorTitle')} />
         <Card
           style={[
             styles.errorCard,
             { backgroundColor: colors.dangerSoft, borderColor: colors.dangerBorder },
           ]}>
           <Text style={[styles.errorTitle, { color: colors.danger }]}>
-            Could not load settings
+            {t('settings.errorTitle')}
           </Text>
           <Text style={[styles.errorText, { color: colors.danger }]}>{error}</Text>
-          <Button label="Try again" onPress={() => void refresh()} size="sm" />
+          <Button
+            label={t('common.tryAgain')}
+            onPress={() => void refresh()}
+            size="sm"
+          />
         </Card>
       </Screen>
     );
@@ -319,20 +337,20 @@ export function SettingsScreen() {
   return (
     <Screen>
       <PageHeader
-        title="Settings"
-        subtitle="Stored on this device and shared by every mobile screen."
+        title={t('tab.settings')}
+        subtitle={t('settings.headerSubtitle')}
         actions={
           <>
             <Button
               disabled={!dirty || pending}
-              label="Reset"
+              label={t('common.reset')}
               onPress={() => setDraft(config ? cloneConfig(config) : draft)}
               size="sm"
               variant="secondary"
             />
             <Button
               disabled={!dirty}
-              label="Save"
+              label={t('common.save')}
               left="✓"
               onPress={() => void submit()}
               pending={pending}
@@ -353,11 +371,11 @@ export function SettingsScreen() {
       ) : null}
 
       <SettingsSection
-        subtitle="The logical day rolls over at this local time."
-        title="General">
+        subtitle={t('settings.general.subtitle')}
+        title={t('settings.general.title')}>
         <Field
-          hint="Use 04:00 for late-night study."
-          label="Day boundary">
+          hint={t('settings.boundary.hint')}
+          label={t('settings.boundary.label')}>
           <ThemedInput
             autoCapitalize="none"
             keyboardType="numbers-and-punctuation"
@@ -369,42 +387,42 @@ export function SettingsScreen() {
           />
         </Field>
         <ToggleRow
-          description="Begin a study phase as soon as the engine starts."
-          label="Start automatically"
+          description={t('settings.autoStart.description')}
+          label={t('settings.autoStart.label')}
           onValueChange={value => patch({ auto_start: value })}
           value={draft.auto_start}
         />
         <ToggleRow
-          description="Show phase, rest, and day-complete alerts. The ongoing timer notification stays visible while a session runs."
-          label="Alerts"
+          description={t('settings.alerts.description')}
+          label={t('settings.alerts.label')}
           onValueChange={value => patch({ notifications: value })}
           value={draft.notifications}
         />
         <View style={styles.notificationRow}>
           <View style={styles.notificationBody}>
             <Text style={[styles.notificationTitle, { color: colors.text }]}>
-              System notifications
+              {t('settings.notifications.title')}
             </Text>
             <Text style={[styles.notificationHint, { color: colors.textMuted }]}>
               {notificationPermission === 'granted'
-                ? 'Allowed. Background timer and lock-screen controls are available.'
+                ? t('settings.notifications.granted')
                 : notificationPermission === 'denied'
-                  ? 'Denied. Background alerts and lock-screen controls will not appear.'
-                  : 'Not requested yet. The app asks when you start a session.'}
+                  ? t('settings.notifications.denied')
+                  : t('settings.notifications.unknown')}
             </Text>
           </View>
           {notificationPermission === 'granted' ? (
-            <Badge label="Allowed" tone="good" />
+            <Badge label={t('settings.notifications.allowed')} tone="good" />
           ) : (
             <View style={styles.notificationActions}>
               <Button
-                label="Allow"
+                label={t('common.allow')}
                 onPress={() => void requestNotificationPermission()}
                 size="sm"
               />
               {notificationPermission === 'denied' ? (
                 <Button
-                  label="Settings"
+                  label={t('common.settingsButton')}
                   onPress={() => void Linking.openSettings()}
                   size="sm"
                   variant="ghost"
@@ -416,19 +434,19 @@ export function SettingsScreen() {
       </SettingsSection>
 
       <SettingsSection
-        subtitle="No quota and no new debt while you are away. Existing debt is preserved."
-        title="Vacation">
+        subtitle={t('settings.vacation.subtitle')}
+        title={t('settings.vacation.title')}>
         <ToggleRow
-          description="Vacation days are treated like free days."
-          label="Enable vacation mode"
+          description={t('settings.vacation.enableDescription')}
+          label={t('settings.vacation.enable')}
           onValueChange={value => updateVacation({ enabled: value })}
           value={draft.vacation.enabled}
         />
         {draft.vacation.enabled ? (
           <View style={styles.inlineFields}>
             <Field
-              hint="Leave blank to start immediately."
-              label="Starts">
+              hint={t('settings.vacation.startsHint')}
+              label={t('settings.vacation.starts')}>
               <ThemedInput
                 autoCapitalize="none"
                 onChangeText={value =>
@@ -440,8 +458,8 @@ export function SettingsScreen() {
               />
             </Field>
             <Field
-              hint="Leave blank to stay on until turned off."
-              label="Ends">
+              hint={t('settings.vacation.endsHint')}
+              label={t('settings.vacation.ends')}>
               <ThemedInput
                 autoCapitalize="none"
                 onChangeText={value =>
@@ -455,16 +473,15 @@ export function SettingsScreen() {
           </View>
         ) : null}
         <Text style={[styles.paragraph, { color: colors.textMuted }]}>
-          Past settled days are not rewritten. Use the recovery reset if you
-          want a fresh start after a long break.
+          {t('settings.vacation.paragraph')}
         </Text>
       </SettingsSection>
 
       <SettingsSection
-        subtitle="Breaks count toward the daily session, by design."
-        title="Pomodoro">
+        subtitle={t('settings.pomodoro.subtitle')}
+        title={t('settings.pomodoro.title')}>
         <View style={styles.inlineFields}>
-          <Field label="Study phase">
+          <Field label={t('settings.pomodoro.study')}>
             <View style={styles.numberRow}>
               <NumberField
                 max={240}
@@ -473,10 +490,12 @@ export function SettingsScreen() {
                 style={styles.numberInput}
                 value={draft.study_minutes}
               />
-              <Text style={[styles.unit, { color: colors.textMuted }]}>min</Text>
+              <Text style={[styles.unit, { color: colors.textMuted }]}>
+                {t('common.minutesShort')}
+              </Text>
             </View>
           </Field>
-          <Field label="Break phase">
+          <Field label={t('settings.pomodoro.break')}>
             <View style={styles.numberRow}>
               <NumberField
                 max={120}
@@ -485,18 +504,20 @@ export function SettingsScreen() {
                 style={styles.numberInput}
                 value={draft.break_minutes}
               />
-              <Text style={[styles.unit, { color: colors.textMuted }]}>min</Text>
+              <Text style={[styles.unit, { color: colors.textMuted }]}>
+                {t('common.minutesShort')}
+              </Text>
             </View>
           </Field>
         </View>
       </SettingsSection>
 
       <SettingsSection
-        subtitle="Bound accumulated debt and recover from a bad streak."
-        title="Recovery">
+        subtitle={t('settings.recovery.subtitle')}
+        title={t('settings.recovery.title')}>
         <View style={styles.recoveryDebtRow}>
           <Text style={[styles.recoveryDebtLabel, { color: colors.textMuted }]}>
-            Carried debt
+            {t('settings.recovery.carriedDebt')}
           </Text>
           <Text style={[styles.recoveryDebtValue, { color: colors.text }]}>
             {formatHours(debtSeconds)}
@@ -504,8 +525,8 @@ export function SettingsScreen() {
         </View>
         <View style={styles.inlineFields}>
           <Field
-            hint="0 disables the ceiling. Lowering it below current debt forgives the excess when saved."
-            label="Maximum carried debt">
+            hint={t('settings.recovery.maxDebtHint')}
+            label={t('settings.recovery.maxDebt')}>
             <View style={styles.numberRow}>
               <NumberField
                 max={168}
@@ -514,12 +535,14 @@ export function SettingsScreen() {
                 style={styles.numberInput}
                 value={draft.max_debt_hours}
               />
-              <Text style={[styles.unit, { color: colors.textMuted }]}>hours</Text>
+              <Text style={[styles.unit, { color: colors.textMuted }]}>
+                {t('common.hours')}
+              </Text>
             </View>
           </Field>
           <Field
-            hint="Days between debt resets."
-            label="Reset cooldown">
+            hint={t('settings.recovery.cooldownHint')}
+            label={t('settings.recovery.cooldown')}>
             <View style={styles.numberRow}>
               <NumberField
                 max={365}
@@ -528,7 +551,9 @@ export function SettingsScreen() {
                 style={styles.numberInput}
                 value={draft.reset_cooldown_days}
               />
-              <Text style={[styles.unit, { color: colors.textMuted }]}>days</Text>
+              <Text style={[styles.unit, { color: colors.textMuted }]}>
+                {t('common.days')}
+              </Text>
             </View>
           </Field>
         </View>
@@ -540,7 +565,7 @@ export function SettingsScreen() {
               !recovery.can_reset ||
               resetPending
             }
-            label="Forgive carried debt"
+            label={t('settings.recovery.forgive')}
             onPress={confirmReset}
             pending={resetPending}
             size="sm"
@@ -549,28 +574,29 @@ export function SettingsScreen() {
           <Text style={[styles.help, styles.helpGrow, { color: colors.textMuted }]}>
             {debtSeconds <= 0
               ? recovery?.next_reset_on != null
-                ? `No carried debt. Next reset available on ${formatDate(
-                    recovery.next_reset_on,
-                  )}.`
-                : 'No carried debt.'
+                ? t('settings.recovery.noDebtNext', {
+                    date: formatDate(recovery.next_reset_on, language),
+                  })
+                : t('settings.recovery.noDebt')
               : recovery === null
-                ? 'Checking cooldown…'
+                ? t('settings.recovery.checking')
                 : recovery.can_reset
-                  ? 'Available now.'
+                  ? t('settings.recovery.available')
                   : recovery.next_reset_on !== null
-                    ? `Next reset available on ${formatDate(recovery.next_reset_on)}.`
-                    : 'Cooldown active.'}
+                    ? t('settings.recovery.nextAvailable', {
+                        date: formatDate(recovery.next_reset_on, language),
+                      })
+                    : t('settings.recovery.cooldownActive')}
           </Text>
         </View>
         <Text style={[styles.paragraph, { color: colors.textMuted }]}>
-          The reset clears only the daily carried debt. Study time, history, and
-          checklist progress are kept.
+          {t('settings.recovery.paragraph')}
         </Text>
       </SettingsSection>
 
       <SettingsSection
-        subtitle="Each weekday can require carried hours, set an optional goal, or be free."
-        title="Weekly schedule">
+        subtitle={t('settings.schedule.subtitle')}
+        title={t('settings.schedule.title')}>
         <View>
           {WEEKDAYS.map((day, index) => {
             const setting = draft.schedule[day];
@@ -579,13 +605,13 @@ export function SettingsScreen() {
                 <View style={styles.weekdayRow}>
                   <View style={styles.weekdayTop}>
                     <Text style={[styles.weekdayName, { color: colors.text }]}>
-                      {titleCase(day)}
+                      {weekdayLabel(t, day)}
                     </Text>
                     <View style={styles.chips}>
                       {DAY_MODES.map(mode => (
                         <ChoiceChip
                           key={mode}
-                          label={titleCase(mode)}
+                          label={modeLabel(t, mode)}
                           onPress={() => changeMode(day, mode)}
                           selected={setting.mode === mode}
                         />
@@ -595,7 +621,7 @@ export function SettingsScreen() {
                   <View style={styles.weekdayBottom}>
                     {setting.mode === 'free' ? (
                       <Text style={[styles.help, { color: colors.textMuted }]}>
-                        No quota
+                        {t('settings.schedule.noQuota')}
                       </Text>
                     ) : (
                       <View style={styles.numberRow}>
@@ -609,12 +635,18 @@ export function SettingsScreen() {
                           value={setting.quota_minutes}
                         />
                         <Text style={[styles.unit, { color: colors.textMuted }]}>
-                          min
+                          {t('common.minutesShort')}
                         </Text>
                       </View>
                     )}
                     <Text style={[styles.help, styles.helpGrow, { color: colors.textFaint }]}>
-                      {MODE_HELP[setting.mode]}
+                      {t(
+                        setting.mode === 'carried'
+                          ? 'timer.dayHint.carried'
+                          : setting.mode === 'optional'
+                            ? 'timer.dayHint.optional'
+                            : 'timer.dayHint.free',
+                      )}
                     </Text>
                   </View>
                 </View>
@@ -626,39 +658,54 @@ export function SettingsScreen() {
       </SettingsSection>
 
       <SettingsSection
-        subtitle="Follow the device or choose a fixed appearance."
-        title="Appearance">
+        subtitle={t('settings.language.subtitle')}
+        title={t('settings.language.title')}>
         <View style={styles.chips}>
-          {THEME_OPTIONS.map(option => (
+          {LANGUAGE_OPTIONS.map(option => (
             <ChoiceChip
               key={option.value}
-              label={option.label}
-              onPress={() => setPreference(option.value)}
-              selected={preference === option.value}
+              label={t(option.labelKey)}
+              onPress={() => setLanguagePreference(option.value)}
+              selected={languagePreference === option.value}
             />
           ))}
         </View>
         <Text style={[styles.paragraph, { color: colors.textMuted }]}>
-          The choice is remembered on this device. System mode follows Android's
-          dark-theme setting.
+          {t('settings.language.paragraph')}
         </Text>
       </SettingsSection>
 
       <SettingsSection
-        subtitle="Everything stays in app-private storage."
-        title="Your data">
+        subtitle={t('settings.appearance.subtitle')}
+        title={t('settings.appearance.title')}>
+        <View style={styles.chips}>
+          {THEME_OPTIONS.map(option => (
+            <ChoiceChip
+              key={option.value}
+              label={t(option.labelKey)}
+              onPress={() => setThemePreference(option.value)}
+              selected={themePreference === option.value}
+            />
+          ))}
+        </View>
         <Text style={[styles.paragraph, { color: colors.textMuted }]}>
-          The embedded Python engine stores config, state, checklist, and history
-          on this device. Nothing is uploaded. Uninstalling the app removes the
-          data.
+          {t('settings.appearance.paragraph')}
+        </Text>
+      </SettingsSection>
+
+      <SettingsSection
+        subtitle={t('settings.data.subtitle')}
+        title={t('settings.data.title')}>
+        <Text style={[styles.paragraph, { color: colors.textMuted }]}>
+          {t('settings.data.paragraph')}
         </Text>
         <Text style={[styles.paragraph, { color: colors.textFaint }]}>
-          The desktop transparency settings are not used on Android.
+          {t('settings.data.paragraph2')}
         </Text>
       </SettingsSection>
 
       <Text style={[styles.footer, { color: colors.textFaint }]}>
-        WebStudy mobile · Python engine bundled with Chaquopy
+        {t('settings.footer')}
       </Text>
     </Screen>
   );
@@ -714,7 +761,7 @@ const styles = StyleSheet.create({
     gap: 8,
     flexWrap: 'wrap',
   },
-  weekdayName: { fontSize: 14, fontWeight: '700', width: 78 },
+  weekdayName: { fontSize: 14, fontWeight: '700', width: 96 },
   weekdayBottom: {
     flexDirection: 'row',
     alignItems: 'center',

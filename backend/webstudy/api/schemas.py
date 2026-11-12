@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -53,6 +53,7 @@ class EventResponse(BaseModel):
     summary: str
     body: str
     urgent: bool = False
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 class WeekdaySetting(BaseModel):

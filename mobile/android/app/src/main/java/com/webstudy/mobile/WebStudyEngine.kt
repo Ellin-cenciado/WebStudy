@@ -62,6 +62,12 @@ object WebStudyEngine {
             if (!ok) {
                 throw IllegalStateException("Study engine initialization failed: $envelope")
             }
+            val language = AppLanguage.current(context)
+            bridge.callAttr(
+                "dispatch",
+                "setLanguage",
+                JSONObject().put("language", language).toString(),
+            )
             initialized = true
         }
     }

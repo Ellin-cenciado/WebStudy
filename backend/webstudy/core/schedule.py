@@ -10,6 +10,8 @@ carries and what happens to time that is not studied:
   (Saturday by default).
 * ``FREE``     - no requirement at all. Debt is preserved, not forgiven
   (Sunday by default).
+* ``VACATION`` - an explicit vacation day. Like a free day, it has no quota
+  and preserves debt, but is recorded and displayed as a vacation day.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ class DayKind(Enum):
     CARRIED = "carried"
     OPTIONAL = "optional"
     FREE = "free"
+    VACATION = "vacation"
 
 
 @dataclass(frozen=True)
@@ -39,8 +42,15 @@ class DayPolicy:
     def __post_init__(self) -> None:
         if self.quota_seconds < 0:
             raise ValueError("quota_seconds must not be negative")
-        if self.kind is DayKind.FREE and self.quota_seconds != 0:
-            raise ValueError("a FREE day must have a zero quota")
+        if (
+            self.kind in (DayKind.FREE, DayKind.VACATION)
+            and self.quota_seconds != 0
+        ):
+            raise ValueError("a FREE or VACATION day must have a zero quota")
+
+
+#: The effective policy used for any day inside an active vacation window.
+VACATION_POLICY = DayPolicy(0, DayKind.VACATION)
 
 
 #: Python's ``date.weekday()``: Monday == 0 ... Sunday == 6.

@@ -10,11 +10,12 @@ from __future__ import annotations
 import json
 import os
 import threading
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 _lock = threading.RLock()
 _service = None
+_language = "en"
 _pending_events: list[dict] = []
 _MAX_PENDING_EVENTS = 100
 
@@ -27,12 +28,91 @@ def _error(message: str):
     return json.dumps({"ok": False, "error": message})
 
 
+def _format_hours(seconds) -> str:
+    total = max(0, int(seconds or 0))
+    hours, remainder = divmod(total, 3600)
+    minutes = remainder // 60
+    return f"{hours} h {minutes:02d} min"
+
+
+def _format_date(value) -> str:
+    try:
+        return date.fromisoformat(str(value)).strftime("%d/%m/%Y")
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _localized_event(event) -> tuple[str, str]:
+    if _language != "es":
+        return event.summary, event.body
+    params = getattr(event, "params", None) or {}
+    kind = event.kind
+    if kind == "subject_complete":
+        subject = str(params.get("subject", "La materia"))
+        rest = int(params.get("rest_seconds", 0) or 0)
+        if rest > 0:
+            minutes = max(1, round(rest / 60))
+            return (
+                f"{subject} completa",
+                f"Tomate un descanso de {minutes} minutos.",
+            )
+        return (
+            f"{subject} completa",
+            "Buen trabajo: el objetivo de hoy está cumplido.",
+        )
+    if kind == "debt_reset":
+        return (
+            "Deuda arrastrada perdonada",
+            (
+                f"Se borraron {_format_hours(params.get('forgiven_seconds'))}. "
+                "Próximo reinicio disponible el "
+                f"{_format_date(params.get('next_reset_on'))}."
+            ),
+        )
+    if kind == "day_complete":
+        return (
+            "Día completo",
+            "Terminaste el objetivo de estudio de hoy. ¡Buen trabajo!",
+        )
+    if kind == "item_expired":
+        return (
+            f"Se acabó el tiempo: {params.get('item', 'Ítem')}",
+            "El ítem está en tiempo excedido; ahora cuenta hacia arriba.",
+        )
+    if kind == "debt_capped":
+        return (
+            "Deuda limitada",
+            (
+                f"Se perdonaron {_format_hours(params.get('forgiven_seconds'))} "
+                "de deuda arrastrada para mantenerla en "
+                f"{_format_hours(params.get('cap_seconds'))}."
+            ),
+        )
+    if kind == "phase":
+        if params.get("phase") == "break":
+            minutes = int(params.get("minutes", 0) or 0)
+            return "Hora de una pausa", f"Tomate {minutes} minutos."
+        return "Volvemos a estudiar", "Se terminó la pausa. ¡Vamos!"
+    if kind == "day_rolled":
+        required = _format_hours(params.get("required_seconds"))
+        debt = int(params.get("debt_seconds", 0) or 0)
+        carried = (
+            f"Se arrastraron {_format_hours(debt)}."
+            if debt > 0
+            else "No se arrastró nada."
+        )
+        return "Empezó un nuevo día", f"Objetivo de hoy: {required}. {carried}"
+    return event.summary, event.body
+
+
 def _event_dict(event):
+    summary, body = _localized_event(event)
     return {
         "kind": event.kind,
-        "summary": event.summary,
-        "body": event.body,
+        "summary": summary,
+        "body": body,
         "urgent": event.urgent,
+        "params": getattr(event, "params", None) or {},
     }
 
 
@@ -71,6 +151,7 @@ def _snapshot_payload(service):
             "running": snapshot.running,
             "day_complete": snapshot.day_complete,
             "is_free_day": snapshot.is_free_day,
+            "is_vacation": snapshot.is_vacation,
         },
         "checklist": {
             "active_subject_id": summary.active_subject_id,
@@ -83,13 +164,88 @@ def _snapshot_payload(service):
     }
 
 
-def _poll_payload(service):
+def _notification_payload(service):
+    snapshot = service.snapshot()
+    item = service.checklist.active_item()
+    if _language == "es":
+        if snapshot.day_complete:
+            title = "Día completo"
+            body = "Terminaste el objetivo de estudio de hoy."
+        elif snapshot.is_vacation:
+            title = "Vacaciones"
+            body = "Hoy no hay que estudiar. La deuda se conserva."
+        elif snapshot.is_free_day:
+            title = "Día libre"
+            body = "Hoy no hay que estudiar."
+        elif not snapshot.running:
+            title = "Cronómetro en pausa"
+            body = "Abrí WebStudy para continuar."
+        elif snapshot.phase == "break":
+            title = "Pausa"
+            body = item.text if item is not None else "Tomate un momento."
+        else:
+            title = "Estudiando"
+            body = item.text if item is not None else "Seguí así."
+    elif snapshot.day_complete:
+        title = "Day complete"
+        body = "Today's study goal is finished."
+    elif snapshot.is_vacation:
+        title = "Vacation"
+        body = "No study required today. Debt is preserved."
+    elif snapshot.is_free_day:
+        title = "Free day"
+        body = "No study required today."
+    elif not snapshot.running:
+        title = "Study timer paused"
+        body = "Open WebStudy to resume."
+    elif snapshot.phase == "break":
+        title = "Break"
+        body = item.text if item is not None else "Step away for a moment."
+    else:
+        title = "Studying"
+        body = item.text if item is not None else "Keep going."
+    return {
+        "title": title,
+        "body": body,
+        "phase": snapshot.phase,
+        "remaining_seconds": snapshot.phase_remaining_seconds,
+        "elapsed_seconds": snapshot.elapsed_seconds,
+        "running": snapshot.running,
+        "day_complete": snapshot.day_complete,
+        "is_free_day": snapshot.is_free_day,
+        "is_vacation": snapshot.is_vacation,
+        "notifications_enabled": service.config.notifications,
+    }
+
+
+def _poll_payload(service, *, drain_events: bool = True):
     _queue_events(service.tick())
+    events = _drain_events() if drain_events else list(_pending_events)
     return {
         "state": _snapshot_payload(service),
         "checklist": service.checklist_data(),
-        "events": _drain_events(),
+        "notification": _notification_payload(service),
+        "events": events,
     }
+
+
+def _android_clock():
+    """Use Android's boot-time clock so deep sleep counts as study time."""
+    try:
+        from java import jclass
+
+        system_clock = jclass("android.os.SystemClock")
+
+        class AndroidClock:
+            def now(self):
+                return datetime.now().astimezone()
+
+            def monotonic(self):
+                return system_clock.elapsedRealtime() / 1000.0
+
+        return AndroidClock()
+    except Exception:
+        return None
 
 
 def _config_payload(config):
@@ -99,6 +255,21 @@ def _config_payload(config):
         "study_minutes": config.study_seconds // 60,
         "break_minutes": config.break_seconds // 60,
         "notifications": config.notifications,
+        "vacation": {
+            "enabled": config.vacation.enabled,
+            "start": (
+                config.vacation.start.isoformat()
+                if config.vacation.start is not None
+                else None
+            ),
+            "end": (
+                config.vacation.end.isoformat()
+                if config.vacation.end is not None
+                else None
+            ),
+        },
+        "max_debt_hours": config.max_debt_seconds // (60 * 60),
+        "reset_cooldown_days": config.reset_cooldown_days,
         "schedule": {
             name: {
                 "mode": config.schedule.days[index].kind.value,
@@ -127,7 +298,8 @@ def _config_from_payload(payload, current):
         DayPolicy,
         Schedule,
     )
-    from webstudy.storage.config import Config, parse_boundary
+    from webstudy.core.vacation import Vacation
+    from webstudy.storage.config import Config, parse_boundary, parse_optional_date
 
     days = {}
     for name in WEEKDAY_NAMES:
@@ -136,6 +308,7 @@ def _config_from_payload(payload, current):
         quota = 0 if kind is DayKind.FREE else int(setting.get("quota_minutes", 0)) * 60
         days[WEEKDAY_INDEX[name]] = DayPolicy(quota, kind)
 
+    vacation_payload = payload.get("vacation", {}) or {}
     return Config(
         boundary=parse_boundary(str(payload.get("boundary", "04:00"))),
         auto_start=bool(payload.get("auto_start", False)),
@@ -144,13 +317,39 @@ def _config_from_payload(payload, current):
         notifications=bool(payload.get("notifications", True)),
         schedule=Schedule(days),
         transparency=current.transparency,
+        vacation=Vacation(
+            enabled=bool(vacation_payload.get("enabled", False)),
+            start=parse_optional_date(vacation_payload.get("start")),
+            end=parse_optional_date(vacation_payload.get("end")),
+        ),
+        max_debt_seconds=int(payload.get("max_debt_hours", 12)) * 60 * 60,
+        reset_cooldown_days=int(payload.get("reset_cooldown_days", 30)),
     )
 
 
-def _current_streak(rows, day_kind_free: str) -> int:
+def _recovery_payload(service):
+    status = service.recovery()
+    return {
+        "debt_seconds": status.debt_seconds,
+        "cooldown_days": status.cooldown_days,
+        "last_reset_on": (
+            status.last_reset_on.isoformat()
+            if status.last_reset_on is not None
+            else None
+        ),
+        "next_reset_on": (
+            status.next_reset_on.isoformat()
+            if status.next_reset_on is not None
+            else None
+        ),
+        "can_reset": status.can_reset,
+    }
+
+
+def _current_streak(rows, skipped_kinds: set[str]) -> int:
     streak = 0
     for row in sorted(rows, key=lambda item: item.logical_date, reverse=True):
-        if row.day_kind == day_kind_free:
+        if row.day_kind in skipped_kinds:
             continue
         if row.required_seconds == 0:
             continue
@@ -185,7 +384,9 @@ def _stats_payload(service, days: int):
     debt = rows[-1].debt_out_seconds if rows else 0
     return {
         "summary": {
-            "streak": _current_streak(rows, DayKind.FREE.value),
+            "streak": _current_streak(
+                rows, {DayKind.FREE.value, DayKind.VACATION.value}
+            ),
             "completed": completed,
             "total": len(relevant),
             "debt_seconds": debt,
@@ -233,7 +434,7 @@ def init(home: str) -> str:
         if not config_path.exists():
             config_mod.save(config, config_path)
 
-        service = StudyService(config)
+        service = StudyService(config, clock=_android_clock())
         if config.auto_start:
             service.start()
         _queue_events(service.tick())
@@ -257,16 +458,39 @@ def dispatch(method: str, payload_json: str | None = None) -> str:
         with _lock:
             if method == "init":
                 return init(str(payload.get("home", "")))
+            if method == "setLanguage":
+                global _language
+                language = str(payload.get("language", "en")).lower()
+                _language = "es" if language.startswith("es") else "en"
+                return _ok({"language": _language})
             if _service is None:
                 return _error("The study engine is not initialized.")
 
             service = _service
 
             if method == "poll":
-                return _ok(_poll_payload(service))
+                return _ok(
+                    _poll_payload(
+                        service,
+                        drain_events=bool(payload.get("drainEvents", True)),
+                    )
+                )
 
             if method == "config":
                 return _ok(_config_payload(service.config))
+
+            if method == "recovery":
+                return _ok(_recovery_payload(service))
+
+            if method == "resetDebt":
+                outcome = service.reset_debt()
+                payload = _poll_payload(service)
+                payload["reset"] = {
+                    "forgiven_seconds": outcome.forgiven_seconds,
+                    "next_reset_on": outcome.next_reset_on.isoformat(),
+                }
+                payload["recovery"] = _recovery_payload(service)
+                return _ok(payload)
 
             if method == "saveConfig":
                 from webstudy.storage import config as config_mod
@@ -322,6 +546,11 @@ def dispatch(method: str, payload_json: str | None = None) -> str:
                 service.remove_item(str(payload.get("itemId", "")))
             elif method == "checkItem":
                 _queue_events(service.check_item(str(payload.get("itemId", ""))))
+            elif method == "importPlan":
+                subjects = payload.get("subjects")
+                if not isinstance(subjects, list):
+                    raise ValueError("subjects must be a list")
+                service.import_plan(subjects)
             elif method == "persist":
                 service._persist(force=True)
             elif method == "shutdown":

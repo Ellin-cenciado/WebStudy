@@ -21,6 +21,7 @@ class StateRoundTripTest(unittest.TestCase):
             phase_elapsed_seconds=90,
             break_override_seconds=300,
             running=True,
+            last_reset_day=date(2026, 10, 1),
         )
         restored = state_mod.from_dict(state_mod.to_dict(original))
         self.assertEqual(restored, original)

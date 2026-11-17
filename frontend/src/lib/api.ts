@@ -1,8 +1,16 @@
 import type {
   ChecklistData,
+  ChecklistImportResult,
+  ChecklistImportSubject,
   Config,
+  Recovery,
   StateEnvelope,
   StatsResponse,
+  StudyPrepConfig,
+  StudyPrepDepth,
+  StudyPrepLanguage,
+  StudyPrepResult,
+  StudyPrepRun,
 } from "./types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(
@@ -10,13 +18,29 @@ const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(
   "",
 ) ?? "/api";
 
+export interface StudyPrepCreateInput {
+  notes: string;
+  language: StudyPrepLanguage;
+  depth: StudyPrepDepth;
+  targetMinutes: number | null;
+  files: File[];
+}
+
 export class ApiError extends Error {
   status: number;
+  code: string | null;
+  hint: string | null;
 
-  constructor(message: string, status: number) {
+  constructor(
+    message: string,
+    status: number,
+    details: { code?: string | null; hint?: string | null } = {},
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = details.code ?? null;
+    this.hint = details.hint ?? null;
   }
 }
 
@@ -46,7 +70,11 @@ function detailMessage(payload: unknown, fallback: string): string {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
-  if (init?.body && !headers.has("Content-Type")) {
+  if (
+    init?.body &&
+    !(init.body instanceof FormData) &&
+    !headers.has("Content-Type")
+  ) {
     headers.set("Content-Type", "application/json");
   }
   const response = await fetch(`${API_BASE}${path}`, {
@@ -60,9 +88,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       payload = null;
     }
+    const record =
+      payload && typeof payload === "object"
+        ? (payload as Record<string, unknown>)
+        : null;
     throw new ApiError(
       detailMessage(payload, response.statusText || "Request failed"),
       response.status,
+      {
+        code: typeof record?.code === "string" ? record.code : null,
+        hint: typeof record?.hint === "string" ? record.hint : null,
+      },
     );
   }
   if (response.status === 204) {
@@ -81,6 +117,12 @@ export const api = {
       body: JSON.stringify(config),
     }),
   stats: (days = 30) => request<StatsResponse>(`/stats?days=${days}`),
+
+  recovery: () => request<Recovery>("/recovery"),
+  resetDebt: () =>
+    request<{ forgiven_seconds: number; recovery: Recovery }>("/recovery/reset", {
+      method: "POST",
+    }),
 
   start: () => request<void>("/session/start", { method: "POST" }),
   pause: () => request<void>("/session/pause", { method: "POST" }),
@@ -122,6 +164,54 @@ export const api = {
     request<void>(`/items/${itemId}`, { method: "DELETE" }),
   checkItem: (itemId: string) =>
     request<void>(`/items/${itemId}/check`, { method: "POST" }),
+
+  importChecklist: (subjects: ChecklistImportSubject[]) =>
+    request<ChecklistImportResult>("/checklist/import", {
+      method: "POST",
+      body: JSON.stringify({ subjects }),
+    }),
+
+  studyPrepConfig: () => request<StudyPrepConfig>("/study-prep/config"),
+  studyPrepRuns: () => request<StudyPrepRun[]>("/study-prep/runs"),
+  studyPrepRun: (runId: string) =>
+    request<StudyPrepRun>(`/study-prep/runs/${runId}`),
+  studyPrepResult: (runId: string) =>
+    request<StudyPrepResult>(`/study-prep/runs/${runId}/result`),
+  createStudyPrepRun: (input: StudyPrepCreateInput) => {
+    const body = new FormData();
+    body.set("notes", input.notes);
+    body.set("language", input.language);
+    body.set("depth", input.depth);
+    body.set(
+      "target_minutes",
+      input.targetMinutes === null ? "" : String(input.targetMinutes),
+    );
+    for (const file of input.files) {
+      body.append("files", file);
+    }
+    return request<StudyPrepRun>("/study-prep/runs", {
+      method: "POST",
+      body,
+    });
+  },
+  cancelStudyPrepRun: (runId: string) =>
+    request<StudyPrepRun>(`/study-prep/runs/${runId}/cancel`, {
+      method: "POST",
+    }),
+  retryStudyPrepRun: (runId: string) =>
+    request<StudyPrepRun>(`/study-prep/runs/${runId}/retry`, {
+      method: "POST",
+    }),
+  deleteStudyPrepRun: (runId: string) =>
+    request<void>(`/study-prep/runs/${runId}`, { method: "DELETE" }),
+  importStudyPrepRun: (
+    runId: string,
+    subjects?: ChecklistImportSubject[],
+  ) =>
+    request<ChecklistImportResult>(`/study-prep/runs/${runId}/import`, {
+      method: "POST",
+      body: subjects === undefined ? undefined : JSON.stringify({ subjects }),
+    }),
 };
 
 export function streamUrl(): string {

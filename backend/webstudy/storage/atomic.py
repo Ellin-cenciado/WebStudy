@@ -14,12 +14,17 @@ def write_text_atomic(path: Path, payload: str) -> None:
     data is written to a temporary file in the same directory, flushed, and
     then moved into place with :func:`os.replace`.
     """
+    write_bytes_atomic(path, payload.encode("utf-8"))
+
+
+def write_bytes_atomic(path: Path, payload: bytes) -> None:
+    """Write binary ``payload`` to ``path`` atomically with an fsync."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(
         dir=str(path.parent), prefix=f".{path.stem}-", suffix=".tmp"
     )
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "wb") as handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())

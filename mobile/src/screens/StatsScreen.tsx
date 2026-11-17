@@ -11,20 +11,17 @@ import {
   StatCard,
 } from '../components/ui';
 import { useLive } from '../context/LiveContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext';
 import { api } from '../lib/api';
-import {
-  errorMessage,
-  formatDate,
-  formatHours,
-  titleCase,
-} from '../lib/format';
+import { errorMessage, formatDate, formatHours } from '../lib/format';
+import { dayKindLabel } from '../i18n/labels';
 import type { DayRow, StatsResponse } from '../lib/types';
 
 const CHART_HEIGHT = 132;
 
 function dayTone(day: DayRow): 'good' | 'warn' | 'muted' {
-  if (day.day_kind === 'free') {
+  if (day.day_kind === 'free' || day.day_kind === 'vacation') {
     return 'muted';
   }
   return day.completed ? 'good' : 'warn';
@@ -32,6 +29,8 @@ function dayTone(day: DayRow): 'good' | 'warn' | 'muted' {
 
 function DayRowItem({ day, last }: { day: DayRow; last: boolean }) {
   const { colors } = useTheme();
+  const { t, language } = useLanguage();
+  const offDay = day.day_kind === 'free' || day.day_kind === 'vacation';
   const percent =
     day.required_seconds > 0
       ? Math.min(100, Math.round((day.elapsed_seconds / day.required_seconds) * 100))
@@ -50,20 +49,28 @@ function DayRowItem({ day, last }: { day: DayRow; last: boolean }) {
       <View style={styles.dayRow}>
         <View style={[styles.percent, { backgroundColor: toneBg }]}>
           <Text style={[styles.percentText, { color: toneFg }]}>
-            {day.day_kind === 'free' ? 'Free' : `${percent}%`}
+            {day.day_kind === 'vacation'
+              ? t('stats.vac')
+              : day.day_kind === 'free'
+                ? t('stats.free')
+                : `${percent}%`}
           </Text>
         </View>
         <View style={styles.dayInfo}>
           <Text style={[styles.dayDate, { color: colors.text }]}>
-            {formatDate(day.logical_date)}
+            {formatDate(day.logical_date, language)}
           </Text>
           <Text style={[styles.dayMeta, { color: colors.textMuted }]}>
-            {formatHours(day.elapsed_seconds)} studied
+            {t('stats.studied', {
+              hours: formatHours(day.elapsed_seconds),
+            })}
             {day.required_seconds > 0
-              ? ` of ${formatHours(day.required_seconds)}`
+              ? t('stats.of', { hours: formatHours(day.required_seconds) })
               : ''}
             {day.optional_goal_seconds > 0
-              ? ` · optional ${formatHours(day.optional_done_seconds)}`
+              ? t('stats.optional', {
+                  hours: formatHours(day.optional_done_seconds),
+                })
               : ''}
           </Text>
         </View>
@@ -74,19 +81,21 @@ function DayRowItem({ day, last }: { day: DayRow; last: boolean }) {
               {
                 color: day.completed
                   ? colors.good
-                  : day.day_kind === 'free'
+                  : offDay
                     ? colors.textFaint
                     : colors.warn,
               },
             ]}>
-            {day.day_kind === 'free'
-              ? 'No goal'
+            {offDay
+              ? t('stats.noGoal')
               : day.completed
-                ? 'Complete'
-                : 'Incomplete'}
+                ? t('stats.complete')
+                : t('stats.incomplete')}
           </Text>
           <Text style={[styles.dayDebt, { color: colors.textFaint }]}>
-            debt {formatHours(day.debt_out_seconds)}
+            {t('stats.debtLine', {
+              hours: formatHours(day.debt_out_seconds),
+            })}
           </Text>
         </View>
       </View>
@@ -97,12 +106,13 @@ function DayRowItem({ day, last }: { day: DayRow; last: boolean }) {
 
 function Bars({ days }: { days: DayRow[] }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const recent = days.slice(-14);
   if (recent.length === 0) {
     return (
       <View style={[styles.chartEmpty, { borderColor: colors.border }]}>
         <Text style={[styles.chartEmptyText, { color: colors.textFaint }]}>
-          No history yet.
+          {t('stats.noHistory')}
         </Text>
       </View>
     );
@@ -151,6 +161,7 @@ function Bars({ days }: { days: DayRow[] }) {
 export function StatsScreen() {
   const { state } = useLive();
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -174,11 +185,11 @@ export function StatsScreen() {
   return (
     <Screen>
       <PageHeader
-        title="Stats"
-        subtitle="The last 30 days of study, debt, and compliance."
+        title={t('stats.title')}
+        subtitle={t('stats.subtitle')}
         actions={
           <Button
-            label="Refresh"
+            label={t('common.refresh')}
             left="↻"
             onPress={() => void load()}
             pending={loading}
@@ -195,12 +206,16 @@ export function StatsScreen() {
             { backgroundColor: colors.dangerSoft, borderColor: colors.dangerBorder },
           ]}>
           <Text style={[styles.errorTitle, { color: colors.danger }]}>
-            Could not load stats
+            {t('stats.errorTitle')}
           </Text>
           <Text style={[styles.errorMessage, { color: colors.danger }]}>
             {error}
           </Text>
-          <Button label="Try again" onPress={() => void load()} size="sm" />
+          <Button
+            label={t('common.tryAgain')}
+            onPress={() => void load()}
+            size="sm"
+          />
         </Card>
       ) : null}
 
@@ -208,19 +223,19 @@ export function StatsScreen() {
         <Card style={styles.loadingCard}>
           <Spinner />
           <Text style={[styles.loadingText, { color: colors.textMuted }]}>
-            Loading history…
+            {t('stats.loading')}
           </Text>
         </Card>
       ) : (
         <>
           <View style={styles.summaryRow}>
             <StatCard
-              label="Streak"
+              label={t('stats.streak')}
               value={`${stats.summary.streak}d`}
               tone={stats.summary.streak > 0 ? 'good' : 'muted'}
             />
             <StatCard
-              label="Compliance"
+              label={t('stats.compliance')}
               value={
                 stats.summary.total === 0
                   ? '—'
@@ -236,7 +251,7 @@ export function StatsScreen() {
               }
             />
             <StatCard
-              label="Debt"
+              label={t('stats.debt')}
               value={formatHours(stats.summary.debt_seconds)}
               tone={stats.summary.debt_seconds > 0 ? 'warn' : 'good'}
             />
@@ -246,14 +261,17 @@ export function StatsScreen() {
             <View style={styles.chartHeader}>
               <View style={styles.chartHeaderText}>
                 <Text style={[styles.chartTitle, { color: colors.text }]}>
-                  Last 14 days
+                  {t('stats.last14')}
                 </Text>
                 <Text style={[styles.chartSubtitle, { color: colors.textMuted }]}>
-                  Green means the goal was met. Amber means it was not.
+                  {t('stats.chartSubtitle')}
                 </Text>
               </View>
               <Badge
-                label={`${stats.summary.completed}/${stats.summary.total} days`}
+                label={t('stats.daysBadge', {
+                  completed: stats.summary.completed,
+                  total: stats.summary.total,
+                })}
                 tone="muted"
               />
             </View>
@@ -262,15 +280,22 @@ export function StatsScreen() {
 
           <Card padded={false}>
             <View style={styles.logHeader}>
-              <Text style={[styles.logTitle, { color: colors.text }]}>Day log</Text>
+              <Text style={[styles.logTitle, { color: colors.text }]}>
+                {t('stats.dayLog')}
+              </Text>
               <Text style={[styles.logCount, { color: colors.textFaint }]}>
-                {stats.days.length} day{stats.days.length === 1 ? '' : 's'}
+                {t(
+                  stats.days.length === 1
+                    ? 'stats.dayCountOne'
+                    : 'stats.dayCountOther',
+                  { count: stats.days.length },
+                )}
               </Text>
             </View>
             <Divider />
             {stats.days.length === 0 ? (
               <Text style={[styles.logEmpty, { color: colors.textMuted }]}>
-                History appears after the first day settles.
+                {t('stats.emptyHistory')}
               </Text>
             ) : (
               <View style={styles.logList}>
@@ -286,7 +311,9 @@ export function StatsScreen() {
           </Card>
 
           <Text style={[styles.footnote, { color: colors.textFaint }]}>
-            {titleCase(state?.snapshot.day_kind ?? '')} today · updated every second
+            {t('stats.footnote', {
+              dayKind: dayKindLabel(t, state?.snapshot.day_kind ?? ''),
+            })}
           </Text>
         </>
       )}

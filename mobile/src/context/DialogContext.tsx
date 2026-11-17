@@ -17,6 +17,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useLanguage } from './LanguageContext';
 import { useTheme } from './ThemeContext';
 
 export interface ConfirmOptions {
@@ -66,6 +67,7 @@ function DialogHost({
   onResolve: (value: boolean | string | null) => void;
 }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const initial =
     pending.kind === 'prompt' ? pending.options.initialValue ?? '' : '';
   const [value, setValue] = useState(initial);
@@ -84,11 +86,11 @@ function DialogHost({
 
   const options = pending.options;
   const destructive = pending.kind === 'confirm' && pending.options.destructive;
-  const cancelLabel = options.cancelLabel ?? 'Cancel';
+  const cancelLabel = options.cancelLabel ?? t('common.cancel');
   const submitLabel =
     pending.kind === 'confirm'
-      ? pending.options.confirmLabel ?? 'Confirm'
-      : pending.options.submitLabel ?? 'Save';
+      ? pending.options.confirmLabel ?? t('common.confirm')
+      : pending.options.submitLabel ?? t('common.save');
   const emptyPrompt = pending.kind === 'prompt' && value.trim() === '';
 
   return (
@@ -102,7 +104,7 @@ function DialogHost({
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.root}>
         <Pressable
-          accessibilityLabel="Close dialog"
+          accessibilityLabel={t('common.closeDialog')}
           onPress={cancel}
           style={[StyleSheet.absoluteFill, styles.backdrop]}
         />
@@ -123,7 +125,7 @@ function DialogHost({
           {pending.kind === 'prompt' ? (
             <View style={styles.field}>
               <Text style={[styles.label, { color: colors.textMuted }]}>
-                {pending.options.label ?? 'Value'}
+                {pending.options.label ?? t('common.value')}
               </Text>
               <TextInput
                 autoFocus

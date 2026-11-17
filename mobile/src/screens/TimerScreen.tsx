@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   Badge,
   Button,
@@ -10,27 +10,38 @@ import {
   Spinner,
 } from '../components/ui';
 import { useLive } from '../context/LiveContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext';
 import { useAction } from '../hooks/useAction';
-import { api } from '../lib/api';
+import { api, backgroundTimer } from '../lib/api';
+import { formatClock, formatHours, formatTimestamp } from '../lib/format';
 import {
-  formatClock,
-  formatHours,
-  formatTimestamp,
-  titleCase,
-} from '../lib/format';
+  dayKindLabel,
+  phaseLabel,
+  weekdayLabel,
+} from '../i18n/labels';
+import type { Translate } from '../i18n';
 
-function phaseLabel(phase: string, freeDay: boolean, complete: boolean): string {
+function phaseBadge(
+  t: Translate,
+  phase: string,
+  freeDay: boolean,
+  complete: boolean,
+  vacation = false,
+): string {
   if (complete) {
-    return 'Day complete';
+    return t('timer.dayComplete');
+  }
+  if (vacation) {
+    return t('timer.vacation');
   }
   if (freeDay) {
-    return 'Free day';
+    return t('timer.freeDay');
   }
   if (phase === 'idle') {
-    return 'Ready';
+    return t('timer.ready');
   }
-  return titleCase(phase);
+  return phaseLabel(t, phase);
 }
 
 function phaseTone(
@@ -51,8 +62,16 @@ function phaseTone(
 }
 
 export function TimerScreen() {
-  const { state, connected } = useLive();
+  const {
+    state,
+    connected,
+    awaySeconds,
+    dismissAway,
+    notificationPermission,
+    requestNotificationPermission,
+  } = useLive();
   const { colors } = useTheme();
+  const { t, language } = useLanguage();
   const { pending, run } = useAction();
   const snapshot = state?.snapshot;
 
@@ -62,7 +81,7 @@ export function TimerScreen() {
         <Card style={styles.loadingCard}>
           <Spinner />
           <Text style={[styles.loadingText, { color: colors.textMuted }]}>
-            Starting the on-device study engine…
+            {t('timer.loading')}
           </Text>
         </Card>
       </Screen>
@@ -71,6 +90,7 @@ export function TimerScreen() {
 
   const complete = snapshot.day_complete;
   const freeDay = snapshot.is_free_day;
+  const vacation = snapshot.is_vacation;
   const running = snapshot.running;
   const canControl = connected && !complete && !freeDay;
   const phaseLength = snapshot.phase_length_seconds;
@@ -80,39 +100,127 @@ export function TimerScreen() {
       : formatClock(snapshot.phase_remaining_seconds);
 
   const primaryLabel = complete
-    ? 'Done'
-    : freeDay
-      ? 'Free day'
-      : running
-        ? 'Pause'
-        : snapshot.phase === 'complete'
-          ? 'Done'
-          : 'Start';
+    ? t('timer.done')
+    : vacation
+      ? t('timer.vacation')
+      : freeDay
+        ? t('timer.freeDay')
+        : running
+          ? t('timer.pause')
+          : snapshot.phase === 'complete'
+            ? t('timer.done')
+            : t('timer.start');
 
   const heading = complete
-    ? 'You did it.'
-    : freeDay
-      ? 'Take the day off.'
-      : running
-        ? 'Stay with it.'
-        : 'Ready when you are.';
+    ? t('timer.heading.done')
+    : vacation
+      ? t('timer.heading.vacation')
+      : freeDay
+        ? t('timer.heading.free')
+        : running
+          ? t('timer.heading.running')
+          : t('timer.heading.ready');
+
+  const onPrimary = async () => {
+    if (!running) {
+      await requestNotificationPermission();
+    }
+    const ok = await run(() => (running ? api.pause() : api.start()));
+    if (ok && !running) {
+      void backgroundTimer.start().catch(() => {
+        // The state effect will retry while the app is still visible.
+      });
+    }
+  };
 
   return (
     <Screen>
       <PageHeader
         title={heading}
-        subtitle={`${titleCase(snapshot.weekday)} · ${snapshot.logical_day}`}
-        actions={<Badge label={running ? 'Running' : 'Paused'} tone={running ? 'good' : 'muted'} />}
+        subtitle={`${weekdayLabel(t, snapshot.weekday)} · ${snapshot.logical_day}`}
+        actions={
+          <Badge
+            label={running ? t('timer.running') : t('timer.paused')}
+            tone={running ? 'good' : 'muted'}
+          />
+        }
       />
+
+      {awaySeconds !== null ? (
+        <View
+          style={[
+            styles.awayBanner,
+            {
+              backgroundColor: colors.goodSoft,
+              borderColor: colors.goodBorder,
+            },
+          ]}>
+          <View style={styles.awayBody}>
+            <Text style={[styles.awayTitle, { color: colors.good }]}>
+              {t('timer.awayTitle')}
+            </Text>
+            <Text style={[styles.awayText, { color: colors.good }]}>
+              {t('timer.awayBody', { time: formatClock(awaySeconds) })}
+            </Text>
+          </View>
+          <Pressable
+            accessibilityLabel={t('timer.dismissAway')}
+            hitSlop={10}
+            onPress={dismissAway}
+            style={styles.awayDismiss}>
+            <Text style={[styles.awayDismissText, { color: colors.good }]}>
+              ×
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {notificationPermission === 'denied' ? (
+        <View
+          style={[
+            styles.permissionBanner,
+            {
+              backgroundColor: colors.warnSoft,
+              borderColor: colors.warnBorder,
+            },
+          ]}>
+          <View style={styles.awayBody}>
+            <Text style={[styles.awayTitle, { color: colors.warn }]}>
+              {t('timer.notificationsOff')}
+            </Text>
+            <Text style={[styles.awayText, { color: colors.warn }]}>
+              {t('timer.notificationsBody')}
+            </Text>
+          </View>
+          <View style={styles.permissionActions}>
+            <Button
+              label={t('common.allow')}
+              onPress={() => void requestNotificationPermission()}
+              size="sm"
+              variant="secondary"
+            />
+            <Button
+              label={t('common.settingsButton')}
+              onPress={() => void Linking.openSettings()}
+              size="sm"
+              variant="ghost"
+            />
+          </View>
+        </View>
+      ) : null}
 
       <Card style={styles.timerCard}>
         <View style={styles.timerTop}>
           <Badge
-            label={phaseLabel(snapshot.phase, freeDay, complete)}
+            label={phaseBadge(t, snapshot.phase, freeDay, complete, vacation)}
             tone={phaseTone(complete, freeDay, snapshot.phase)}
           />
           <Text style={[styles.updated, { color: colors.textFaint }]}>
-            {running ? '● live' : 'updated'} {formatTimestamp(state.server_time)}
+            {running
+              ? t('timer.live', { time: formatTimestamp(state.server_time, language) })
+              : t('timer.updated', {
+                  time: formatTimestamp(state.server_time, language),
+                })}
           </Text>
         </View>
 
@@ -121,7 +229,13 @@ export function TimerScreen() {
             <Text style={[styles.timer, { color: colors.text }]}>{countdown}</Text>
           ) : (
             <Text style={[styles.ready, { color: colors.text }]}>
-              {complete ? 'Done' : freeDay ? 'Rest' : 'Ready'}
+              {complete
+                ? t('timer.done')
+                : vacation
+                  ? t('timer.off')
+                  : freeDay
+                    ? t('timer.rest')
+                    : t('timer.ready')}
             </Text>
           )}
 
@@ -141,10 +255,15 @@ export function TimerScreen() {
 
           <Text style={[styles.remaining, { color: colors.textMuted }]}>
             {freeDay
-              ? 'No study required today.'
+              ? t('timer.noStudyToday')
               : complete
-                ? `Required ${formatHours(snapshot.required_seconds)} — all done.`
-                : `${formatHours(snapshot.remaining_seconds)} remaining of ${formatHours(snapshot.required_seconds)}`}
+                ? t('timer.requiredDone', {
+                    hours: formatHours(snapshot.required_seconds),
+                  })
+                : t('timer.remainingOf', {
+                    remaining: formatHours(snapshot.remaining_seconds),
+                    required: formatHours(snapshot.required_seconds),
+                  })}
           </Text>
 
           <View style={styles.totalBar}>
@@ -156,17 +275,23 @@ export function TimerScreen() {
             />
             <View style={styles.totalLabels}>
               <Text style={[styles.totalLabel, { color: colors.textMuted }]}>
-                {formatHours(snapshot.elapsed_seconds)} studied
+                {t('timer.studied', {
+                  hours: formatHours(snapshot.elapsed_seconds),
+                })}
               </Text>
               <Text style={[styles.totalLabel, { color: colors.textMuted }]}>
-                {formatHours(snapshot.required_seconds)} goal
+                {t('timer.goal', {
+                  hours: formatHours(snapshot.required_seconds),
+                })}
               </Text>
             </View>
           </View>
 
           {snapshot.debt_seconds > 0 && !complete ? (
             <Badge
-              label={`↺ Carried in ${formatHours(snapshot.debt_seconds)} debt`}
+              label={t('timer.carriedIn', {
+                hours: formatHours(snapshot.debt_seconds),
+              })}
               tone="warn"
             />
           ) : null}
@@ -176,7 +301,7 @@ export function TimerScreen() {
               style={[styles.optional, { backgroundColor: colors.cardAlt }]}>
               <View style={styles.optionalLabels}>
                 <Text style={[styles.optionalLabel, { color: colors.text }]}>
-                  Optional goal
+                  {t('timer.optionalGoal')}
                 </Text>
                 <Text style={[styles.optionalValue, { color: colors.textMuted }]}>
                   {formatHours(snapshot.optional_done_seconds)} /{' '}
@@ -198,15 +323,13 @@ export function TimerScreen() {
             disabled={!canControl}
             label={primaryLabel}
             left={running ? '❚❚' : '▶'}
-            onPress={() =>
-              void run(() => (running ? api.pause() : api.start()))
-            }
+            onPress={() => void onPrimary()}
             pending={pending}
             style={styles.grow}
           />
           <Button
             disabled={!canControl || snapshot.phase === 'idle'}
-            label="Skip phase"
+            label={t('timer.skipPhase')}
             left="▶▶"
             onPress={() => void run(() => api.skipPhase())}
             variant="secondary"
@@ -217,35 +340,37 @@ export function TimerScreen() {
       <View style={styles.infoCards}>
         <Card style={styles.infoCard}>
           <Text style={[styles.infoLabel, { color: colors.textFaint }]}>
-            Day type
+            {t('timer.dayType')}
           </Text>
           <Text style={[styles.infoValue, { color: colors.text }]}>
-            {titleCase(snapshot.day_kind)}
+            {dayKindLabel(t, snapshot.day_kind)}
           </Text>
           <Text style={[styles.infoHint, { color: colors.textMuted }]}>
-            {snapshot.is_free_day
-              ? 'No requirement. Debt is preserved.'
-              : snapshot.day_kind === 'optional'
-                ? 'Goal only. Unmet time is discarded.'
-                : "Unmet time becomes tomorrow's debt."}
+            {vacation
+              ? t('timer.dayHint.vacation')
+              : snapshot.is_free_day
+                ? t('timer.dayHint.free')
+                : snapshot.day_kind === 'optional'
+                  ? t('timer.dayHint.optional')
+                  : t('timer.dayHint.carried')}
           </Text>
         </Card>
 
         <Card style={styles.infoCard}>
           <Text style={[styles.infoLabel, { color: colors.textFaint }]}>
-            Session time
+            {t('timer.sessionTime')}
           </Text>
           <Text style={[styles.infoValue, { color: colors.text }]}>
             {formatHours(snapshot.elapsed_seconds)}
           </Text>
           <Text style={[styles.infoHint, { color: colors.textMuted }]}>
-            Breaks count toward the daily goal.
+            {t('timer.breaksCount')}
           </Text>
         </Card>
 
         <Card style={styles.infoCard}>
           <Text style={[styles.infoLabel, { color: colors.textFaint }]}>
-            Active item
+            {t('timer.activeItem')}
           </Text>
           <Text style={[styles.infoValue, { color: colors.text }]}>
             {state.checklist.active_item_id
@@ -256,8 +381,10 @@ export function TimerScreen() {
           </Text>
           <Text style={[styles.infoHint, { color: colors.textMuted }]}>
             {state.checklist.rest_remaining_seconds > 0
-              ? `Rest: ${formatClock(state.checklist.rest_remaining_seconds)}`
-              : 'Only study time advances the item.'}
+              ? t('timer.restRemaining', {
+                  time: formatClock(state.checklist.rest_remaining_seconds),
+                })
+              : t('timer.onlyStudy')}
           </Text>
         </Card>
       </View>
@@ -266,6 +393,28 @@ export function TimerScreen() {
 }
 
 const styles = StyleSheet.create({
+  awayBanner: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  awayBody: { flex: 1, gap: 2 },
+  awayTitle: { fontSize: 13, fontWeight: '700' },
+  awayText: { fontSize: 12, lineHeight: 17 },
+  awayDismiss: { paddingHorizontal: 4 },
+  awayDismissText: { fontSize: 20, lineHeight: 20, opacity: 0.7 },
+  permissionBanner: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  permissionActions: { alignItems: 'flex-end', gap: 6 },
   loadingCard: {
     minHeight: 220,
     alignItems: 'center',

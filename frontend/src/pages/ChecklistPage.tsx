@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import {
   Check,
   ChevronRight,
@@ -7,6 +8,7 @@ import {
   Pencil,
   Plus,
   RotateCcw,
+  Sparkles,
   Trash2,
   Undo2,
 } from "lucide-react";
@@ -581,6 +583,13 @@ export function ChecklistPage() {
             Add a subject, then add items. Each item gets its own countdown and
             carries any surplus or debt into the next item.
           </p>
+          <Link
+            to="/study-prep"
+            className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-indigo-50 px-3.5 py-2 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100 dark:bg-indigo-950 dark:text-indigo-300 dark:hover:bg-indigo-900"
+          >
+            <Sparkles className="size-4" />
+            Generate a plan from notes and sources
+          </Link>
         </div>
       ) : (
         <div className="space-y-4">

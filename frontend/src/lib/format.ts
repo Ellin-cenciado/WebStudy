@@ -29,6 +29,17 @@ export function formatMinutes(seconds: number): string {
   return `${minutes} min`;
 }
 
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const index = Math.max(
+    0,
+    Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024))),
+  );
+  const value = bytes / 1024 ** index;
+  return `${value >= 10 || index === 0 ? Math.round(value) : value.toFixed(1)} ${units[index]}`;
+}
+
 export function formatDate(isoDate: string): string {
   const [year, month, day] = isoDate.split("-").map(Number);
   const date = new Date(year, month - 1, day);
@@ -45,6 +56,16 @@ export function formatTimestamp(isoTimestamp: string): string {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
+  }).format(date);
+}
+
+export function formatDateTime(isoTimestamp: string): string {
+  const date = new Date(isoTimestamp);
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   }).format(date);
 }
 

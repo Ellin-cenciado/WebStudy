@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import date, timedelta
 from pathlib import Path
 
 from .core.checklist import (
@@ -49,6 +50,35 @@ class ChecklistSummary:
     revision: int = 0
 
 
+@dataclass(frozen=True)
+class RecoveryStatus:
+    """The current debt-forgiveness availability."""
+
+    debt_seconds: int
+    cooldown_days: int
+    last_reset_on: date | None
+    next_reset_on: date | None
+    can_reset: bool
+
+
+@dataclass(frozen=True)
+class ResetOutcome:
+    """Result of a successful debt reset."""
+
+    forgiven_seconds: int
+    next_reset_on: date
+
+
+class RecoveryCooldownError(ValueError):
+    """Raised when a debt reset is still inside its cooldown window."""
+
+    def __init__(self, next_reset_on: date) -> None:
+        self.next_reset_on = next_reset_on
+        super().__init__(
+            f"Next debt reset available on {next_reset_on.isoformat()}"
+        )
+
+
 class StudyService:
     def __init__(
         self,
@@ -77,8 +107,14 @@ class StudyService:
         self._checklist_revision = 0
         self._resting = False
         self._rest_subject_id: str | None = None
+        self._pending_events: list[Event] = []
 
         self._build_tracker()
+        self._pending_events.extend(self._debt_cap_events(self.tracker.last_settled))
+        if self.tracker.startup_debt_forgiven:
+            self._pending_events.append(
+                self._debt_cap_event(self.tracker.startup_debt_forgiven)
+            )
         self._build_checklist()
         # Record any days that were settled while the daemon was not running.
         self._record_settled(self.tracker.last_settled)
@@ -98,6 +134,8 @@ class StudyService:
             ),
             boundary=self.config.boundary,
             state=saved,
+            vacation=self.config.vacation,
+            max_debt_seconds=self.config.max_debt_seconds,
         )
         if self.persist:
             self._ensure_history()
@@ -193,6 +231,75 @@ class StudyService:
         self._checklist_changed()
         return item.id
 
+    def import_plan(self, subjects: list[dict]) -> dict:
+        """Validate and atomically add several subjects and their items.
+
+        The whole batch is checked before anything is mutated, so a bad item
+        can never leave a half-imported plan in the checklist. The revision is
+        bumped once and the caller is responsible for broadcasting the result.
+        """
+        if not isinstance(subjects, list) or not subjects:
+            raise ValueError("a plan must contain at least one subject")
+        if len(subjects) > 20:
+            raise ValueError("a plan can contain at most 20 subjects")
+
+        cleaned: list[tuple[str, list[tuple[str, int]]]] = []
+        for raw_subject in subjects:
+            if not isinstance(raw_subject, dict):
+                raise ValueError("each subject must be an object")
+            name = str(raw_subject.get("name") or "").strip()
+            if not name:
+                raise ValueError("subject names must not be empty")
+            if len(name) > 200:
+                raise ValueError("subject names are limited to 200 characters")
+            raw_items = raw_subject.get("items")
+            if not isinstance(raw_items, list) or not raw_items:
+                raise ValueError(f"subject {name!r} has no items")
+            if len(raw_items) > 100:
+                raise ValueError(
+                    f"subject {name!r} has more than 100 items"
+                )
+            items: list[tuple[str, int]] = []
+            for raw_item in raw_items:
+                if not isinstance(raw_item, dict):
+                    raise ValueError("each item must be an object")
+                text = str(raw_item.get("text") or "").strip()
+                if not text:
+                    raise ValueError("item text must not be empty")
+                if len(text) > 500:
+                    raise ValueError("item text is limited to 500 characters")
+                try:
+                    seconds = int(raw_item.get("duration_seconds") or 0)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("item duration must be a whole number") from exc
+                if not 60 <= seconds <= 24 * 60 * 60:
+                    raise ValueError(
+                        "item durations must be between 1 minute and 24 hours"
+                    )
+                items.append((text, seconds))
+            cleaned.append((name, items))
+
+        created: list[dict] = []
+        for name, items in cleaned:
+            subject = self.checklist.add_subject(name)
+            item_ids = [
+                self.checklist.add_item(subject.id, text, seconds).id
+                for text, seconds in items
+            ]
+            created.append(
+                {"id": subject.id, "name": subject.name, "item_ids": item_ids}
+            )
+        self.checklist.ensure_active()
+        self._checklist_changed()
+        return {
+            "revision": self._checklist_revision,
+            "subjects": created,
+            "total_items": sum(len(entry["item_ids"]) for entry in created),
+            "total_seconds": sum(
+                seconds for _name, items in cleaned for _text, seconds in items
+            ),
+        }
+
     def rename_item(self, item_id: str, text: str) -> None:
         self.checklist.rename_item(item_id, text)
         self._checklist_changed()
@@ -225,6 +332,10 @@ class StudyService:
                         summary=f"{subject.name} complete",
                         body="Take a 5-minute rest.",
                         urgent=True,
+                        params={
+                            "subject": subject.name,
+                            "rest_seconds": SUBJECT_REST_SECONDS,
+                        },
                     )
                 )
             else:
@@ -239,6 +350,10 @@ class StudyService:
                         summary=f"{subject.name} complete",
                         body="Nice work - today's goal is done.",
                         urgent=True,
+                        params={
+                            "subject": subject.name,
+                            "rest_seconds": 0,
+                        },
                     )
                 )
         self._checklist_changed()
@@ -320,6 +435,62 @@ class StudyService:
         self._record_current()
         self._persist(force=True)
 
+    def recovery(self) -> RecoveryStatus:
+        """Current debt and whether a reset is available."""
+        cooldown = self.config.reset_cooldown_days
+        today = self.tracker.state.logical_day
+        last = self.tracker.state.last_reset_day
+        next_reset = last + timedelta(days=cooldown) if last is not None else None
+        cooldown_ready = next_reset is None or today >= next_reset
+        return RecoveryStatus(
+            debt_seconds=self.tracker.state.debt_seconds,
+            cooldown_days=cooldown,
+            last_reset_on=last,
+            next_reset_on=next_reset if cooldown_ready is False else None,
+            can_reset=cooldown_ready and self.tracker.state.debt_seconds > 0,
+        )
+
+    def reset_debt(self) -> ResetOutcome:
+        """Forgive all currently carried debt and start the cooldown."""
+        self._accrue_checklist()
+        settled = self.tracker.sync()
+        if settled:
+            self._pending_events.extend(self._record_and_events(settled))
+
+        status = self.recovery()
+        if not status.can_reset:
+            if status.next_reset_on is not None:
+                raise RecoveryCooldownError(status.next_reset_on)
+            raise ValueError("There is no carried debt to reset.")
+
+        forgiven = status.debt_seconds
+        today = self.tracker.state.logical_day
+        self.tracker.state.debt_seconds = 0
+        self.tracker.state.last_reset_day = today
+        next_reset = today + timedelta(days=self.config.reset_cooldown_days)
+
+        self._record_current()
+        self._persist(force=True)
+        self._was_complete = self.tracker.day_complete
+        self._pending_events.append(
+            Event(
+                kind="debt_reset",
+                summary="Carried debt forgiven",
+                body=(
+                    f"{format_hours(forgiven)} cleared. "
+                    f"Next reset available on {next_reset.isoformat()}."
+                ),
+                params={
+                    "forgiven_seconds": forgiven,
+                    "next_reset_on": next_reset.isoformat(),
+                },
+            )
+        )
+        return ResetOutcome(
+            forgiven_seconds=forgiven,
+            next_reset_on=next_reset,
+        )
+
     def reload_config(self, config: Config) -> None:
         """Apply a new configuration.
 
@@ -334,7 +505,16 @@ class StudyService:
             break_seconds=config.break_seconds,
         )
         self.tracker.boundary = config.boundary
-        self.tracker.sync()
+        self.tracker.vacation = config.vacation
+        self.tracker.max_debt_seconds = config.max_debt_seconds
+        forgiven = self.tracker.cap_debt()
+        settled = self.tracker.sync()
+        if self.tracker.is_vacation and self.tracker.state.running:
+            self.tracker.pause()
+        if forgiven:
+            self._pending_events.append(self._debt_cap_event(forgiven))
+        if settled:
+            self._pending_events.extend(self._record_and_events(settled))
         self._record_current()
         self._persist(force=True)
 
@@ -351,13 +531,11 @@ class StudyService:
         transitions, advance_result = self._accrue_checklist()
         settled = self.tracker.sync()
 
-        events: list[Event] = []
+        events: list[Event] = self._take_pending_events()
         if advance_result is not None and advance_result.expired:
             events.append(self._item_expired_event(advance_result.item_id))
         if settled:
-            self._record_settled(settled)
-            for day in settled:
-                events.append(self._day_rolled_event(day))
+            events.extend(self._record_and_events(settled))
 
         rest_finished = False
         if self._resting and (
@@ -409,6 +587,7 @@ class StudyService:
             kind="item_expired",
             summary=f"Time's up: {text}",
             body="The item is now in overrun; it is counting up.",
+            params={"item": text},
         )
 
     # -- persistence / history -----------------------------------------
@@ -451,6 +630,47 @@ class StudyService:
                 break_seconds=day.break_seconds,
             )
 
+    def _record_and_events(self, settled: list[SettledDay]) -> list[Event]:
+        """Record settled days and build their cap/day-roll events."""
+        self._record_settled(settled)
+        events: list[Event] = []
+        for day in settled:
+            if day.result.debt_forgiven > 0:
+                events.append(self._debt_cap_event(day.result.debt_forgiven))
+            events.append(self._day_rolled_event(day))
+        return events
+
+    def _debt_cap_event(self, forgiven: int) -> Event:
+        cap = format_hours(self.tracker.max_debt_seconds)
+        return Event(
+            kind="debt_capped",
+            summary="Debt capped",
+            body=(
+                f"{format_hours(forgiven)} of carried debt was forgiven "
+                f"to keep it at {cap}."
+            ),
+            params={
+                "forgiven_seconds": forgiven,
+                "cap_seconds": self.tracker.max_debt_seconds,
+            },
+        )
+
+    def _debt_cap_events(self, settled: list[SettledDay]) -> list[Event]:
+        return [
+            self._debt_cap_event(day.result.debt_forgiven)
+            for day in settled
+            if day.result.debt_forgiven > 0
+        ]
+
+    def _take_pending_events(self) -> list[Event]:
+        events = self._pending_events
+        self._pending_events = []
+        return events
+
+    def take_pending_events(self) -> list[Event]:
+        """Drain events queued by a user action outside the normal tick."""
+        return self._take_pending_events()
+
     def _upsert(
         self,
         result: DayResult,
@@ -481,11 +701,13 @@ class StudyService:
                 kind="phase",
                 summary="Break time",
                 body=f"Step away for {length} minutes.",
+                params={"phase": "break", "minutes": length},
             )
         return Event(
             kind="phase",
             summary="Back to studying",
             body="Break's over - let's go.",
+            params={"phase": "study"},
         )
 
     def _day_rolled_event(self, day: SettledDay) -> Event:
@@ -498,6 +720,10 @@ class StudyService:
             kind="day_rolled",
             summary="A new day has started",
             body=f"Today's goal: {format_hours(self.tracker.required_seconds)}. {body}",
+            params={
+                "debt_seconds": debt,
+                "required_seconds": self.tracker.required_seconds,
+            },
         )
 
     def _emit(self, events: list[Event]) -> None:

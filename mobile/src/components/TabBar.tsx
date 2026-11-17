@@ -5,38 +5,46 @@ import {
   MaterialDesignIcons,
   type MaterialDesignIconsIconName,
 } from '@react-native-vector-icons/material-design-icons/static';
+import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext';
+import type { MessageKey } from '../i18n';
 
-export type Tab = 'timer' | 'checklist' | 'stats' | 'settings';
+export type Tab = 'timer' | 'checklist' | 'prep' | 'stats' | 'settings';
 
 const TABS = [
   {
     id: 'timer',
-    label: 'Timer',
+    labelKey: 'tab.timer',
     sfSymbol: 'timer',
     materialIcon: 'timer-outline',
   },
   {
     id: 'checklist',
-    label: 'Checklist',
+    labelKey: 'tab.checklist',
     sfSymbol: 'checklist',
     materialIcon: 'format-list-checks',
   },
   {
+    id: 'prep',
+    labelKey: 'tab.prep',
+    sfSymbol: 'sparkles',
+    materialIcon: 'school-outline',
+  },
+  {
     id: 'stats',
-    label: 'Stats',
+    labelKey: 'tab.stats',
     sfSymbol: 'chart.bar',
     materialIcon: 'chart-bar',
   },
   {
     id: 'settings',
-    label: 'Settings',
+    labelKey: 'tab.settings',
     sfSymbol: 'gearshape',
     materialIcon: 'cog-outline',
   },
 ] satisfies ReadonlyArray<{
   id: Tab;
-  label: string;
+  labelKey: MessageKey;
   sfSymbol: string;
   materialIcon: MaterialDesignIconsIconName;
 }>;
@@ -55,6 +63,7 @@ export function TabBar({
   onChange: (tab: Tab) => void;
 }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const insets = useSafeAreaInsets();
 
   return (
@@ -69,9 +78,10 @@ export function TabBar({
       ]}>
       {TABS.map(tab => {
         const selected = active === tab.id;
+        const label = t(tab.labelKey);
         return (
           <Pressable
-            accessibilityLabel={tab.label}
+            accessibilityLabel={label}
             accessibilityRole="tab"
             accessibilityState={{ selected }}
             key={tab.id}
@@ -111,7 +121,7 @@ export function TabBar({
                 styles.label,
                 { color: selected ? colors.accent : colors.textFaint },
               ]}>
-              {tab.label}
+              {label}
             </Text>
           </Pressable>
         );

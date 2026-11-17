@@ -64,6 +64,11 @@ def log_path() -> Path:
     return state_dir() / "webstudy.log"
 
 
+def study_prep_path() -> Path:
+    """Directory holding study-prep runs, extracted text, and source uploads."""
+    return state_dir() / "study-prep"
+
+
 def ensure_dirs() -> None:
     config_dir().mkdir(parents=True, exist_ok=True)
     state_dir().mkdir(parents=True, exist_ok=True)

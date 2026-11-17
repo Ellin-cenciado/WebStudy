@@ -12,17 +12,14 @@ import {
   ThemedInput,
 } from '../components/ui';
 import { useDialog } from '../context/DialogContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useLive } from '../context/LiveContext';
 import { useTheme } from '../context/ThemeContext';
 import { useToast } from '../context/ToastContext';
 import { useAction } from '../hooks/useAction';
 import { api } from '../lib/api';
-import {
-  formatClock,
-  formatHours,
-  formatOverrun,
-  formatWeekday,
-} from '../lib/format';
+import { formatClock, formatHours, formatOverrun } from '../lib/format';
+import { weekdayLabel } from '../i18n/labels';
 import type {
   ChecklistItem,
   ChecklistSubject,
@@ -31,43 +28,50 @@ import type {
 
 function CarryNote({ item }: { item: ChecklistItem }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const carryIn = item.carry_in_seconds;
   if (item.checked) {
     if (item.carry_out_seconds > 0) {
       return (
         <Text style={{ color: colors.good, fontSize: 11 }}>
-          Surplus {formatClock(item.carry_out_seconds)} passed on
+          {t('checklist.surplusPassed', {
+            time: formatClock(item.carry_out_seconds),
+          })}
         </Text>
       );
     }
     if (item.carry_out_seconds < 0) {
       return (
         <Text style={{ color: colors.danger, fontSize: 11 }}>
-          Overrun {formatClock(-item.carry_out_seconds)} deducted from next
+          {t('checklist.overrunDeducted', {
+            time: formatClock(-item.carry_out_seconds),
+          })}
         </Text>
       );
     }
     return (
-      <Text style={{ color: colors.textMuted, fontSize: 11 }}>Completed</Text>
+      <Text style={{ color: colors.textMuted, fontSize: 11 }}>
+        {t('checklist.completed')}
+      </Text>
     );
   }
   if (carryIn > 0) {
     return (
       <Text style={{ color: colors.good, fontSize: 11 }}>
-        +{formatClock(carryIn)} carried
+        {t('checklist.carried', { time: formatClock(carryIn) })}
       </Text>
     );
   }
   if (carryIn < 0) {
     return (
       <Text style={{ color: colors.danger, fontSize: 11 }}>
-        −{formatClock(-carryIn)} debt
+        {t('checklist.debt', { time: formatClock(-carryIn) })}
       </Text>
     );
   }
   return (
     <Text style={{ color: colors.textMuted, fontSize: 11 }}>
-      {formatClock(item.base_seconds)} planned
+      {t('checklist.planned', { time: formatClock(item.base_seconds) })}
     </Text>
   );
 }
@@ -82,6 +86,7 @@ function ItemRow({
   summary: ChecklistSummary;
 }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const { pending, run } = useAction();
   const { confirm, prompt } = useDialog();
   const { push } = useToast();
@@ -97,11 +102,11 @@ function ItemRow({
 
   const editDuration = async () => {
     const result = await prompt({
-      title: 'Item duration',
-      message: `Planned study time for "${item.text}".`,
-      label: 'Minutes',
+      title: t('checklist.itemDurationTitle'),
+      message: t('checklist.itemDurationMessage', { item: item.text }),
+      label: t('checklist.minutesLabel'),
       initialValue: String(Math.max(1, Math.round(item.base_seconds / 60))),
-      submitLabel: 'Update',
+      submitLabel: t('checklist.update'),
       keyboardType: 'number-pad',
     });
     if (result === null) {
@@ -111,22 +116,22 @@ function ItemRow({
     if (!Number.isFinite(minutes) || minutes <= 0) {
       push({
         kind: 'error',
-        title: 'Invalid duration',
-        body: 'Enter a whole number of minutes greater than zero.',
+        title: t('checklist.invalidDurationTitle'),
+        body: t('checklist.invalidDurationBody'),
       });
       return;
     }
     await run(
       () => api.updateItem(item.id, { durationSeconds: minutes * 60 }),
-      { success: 'Duration updated' },
+      { success: t('checklist.durationUpdated') },
     );
   };
 
   const remove = async () => {
     const ok = await confirm({
-      title: 'Delete item?',
-      message: `Delete "${item.text}"? This cannot be undone.`,
-      confirmLabel: 'Delete',
+      title: t('checklist.deleteItemTitle'),
+      message: t('checklist.deleteItemMessage', { item: item.text }),
+      confirmLabel: t('common.delete'),
       destructive: true,
     });
     if (ok) {
@@ -143,7 +148,11 @@ function ItemRow({
       ]}>
       <Pressable
         accessibilityLabel={
-          item.checked ? 'Completed item' : isCurrent ? 'Check item' : 'Pending item'
+          item.checked
+            ? t('checklist.completedItem')
+            : isCurrent
+              ? t('checklist.checkItem')
+              : t('checklist.pendingItem')
         }
         accessibilityRole="button"
         disabled={!isCurrent || item.checked || pending}
@@ -181,7 +190,7 @@ function ItemRow({
             {item.text}
           </Text>
           {isCurrent && !item.checked ? (
-            <Badge label="Current" tone="accent" />
+            <Badge label={t('checklist.current')} tone="accent" />
           ) : null}
         </View>
         <View style={styles.carryRow}>
@@ -189,7 +198,11 @@ function ItemRow({
           {!item.checked &&
           (item.carry_in_seconds !== 0 || item.elapsed_seconds > 0) ? (
             <Text style={[styles.budget, { color: colors.textFaint }]}>
-              · budget {formatClock(Math.max(0, item.base_seconds + item.carry_in_seconds))}
+              {t('checklist.budget', {
+                time: formatClock(
+                  Math.max(0, item.base_seconds + item.carry_in_seconds),
+                ),
+              })}
             </Text>
           ) : null}
         </View>
@@ -197,11 +210,13 @@ function ItemRow({
 
       <View style={styles.itemActions}>
         {item.checked ? (
-          <Text style={[styles.doneText, { color: colors.textFaint }]}>Done</Text>
+          <Text style={[styles.doneText, { color: colors.textFaint }]}>
+            {t('checklist.done')}
+          </Text>
         ) : (
           <>
             <Pressable
-              accessibilityLabel="Edit item duration"
+              accessibilityLabel={t('checklist.editDuration')}
               disabled={pending}
               onPress={() => void editDuration()}
               style={({ pressed }) => [
@@ -218,7 +233,7 @@ function ItemRow({
               </Text>
             </Pressable>
             <Pressable
-              accessibilityLabel="Remove item"
+              accessibilityLabel={t('checklist.removeItem')}
               disabled={pending}
               hitSlop={8}
               onPress={() => void remove()}
@@ -234,6 +249,7 @@ function ItemRow({
 
 function AddItemRow({ subject }: { subject: ChecklistSubject }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const { pending, run } = useAction();
   const { push } = useToast();
   const [text, setText] = useState('');
@@ -248,8 +264,8 @@ function AddItemRow({ subject }: { subject: ChecklistSubject }) {
     if (minutes.trim() !== '' && (!Number.isFinite(parsed) || parsed <= 0)) {
       push({
         kind: 'error',
-        title: 'Invalid duration',
-        body: 'Leave the minutes field empty or enter a positive number.',
+        title: t('checklist.invalidDurationTitle'),
+        body: t('checklist.invalidDurationBodyAdd'),
       });
       return;
     }
@@ -266,7 +282,7 @@ function AddItemRow({ subject }: { subject: ChecklistSubject }) {
     <View style={[styles.addItemRow, { borderTopColor: colors.border }]}>
       <ThemedInput
         onChangeText={setText}
-        placeholder="Add an item…"
+        placeholder={t('checklist.addItemPlaceholder')}
         style={styles.addItemText}
         value={text}
       />
@@ -279,7 +295,7 @@ function AddItemRow({ subject }: { subject: ChecklistSubject }) {
       />
       <Button
         disabled={!text.trim()}
-        label="Add"
+        label={t('checklist.add')}
         left="+"
         onPress={() => void submit()}
         pending={pending}
@@ -299,6 +315,7 @@ function SubjectCard({
   summary: ChecklistSummary;
 }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const { pending, run } = useAction();
   const { confirm, prompt } = useDialog();
   const isActive = subject.id === activeSubjectId;
@@ -308,10 +325,10 @@ function SubjectCard({
   const rename = async () => {
     const name = (
       await prompt({
-        title: 'Rename subject',
-        label: 'Subject name',
+        title: t('checklist.renameSubjectTitle'),
+        label: t('checklist.subjectNameLabel'),
         initialValue: subject.name,
-        submitLabel: 'Rename',
+        submitLabel: t('common.rename'),
       })
     )?.trim();
     if (name && name !== subject.name) {
@@ -321,9 +338,9 @@ function SubjectCard({
 
   const remove = async () => {
     const ok = await confirm({
-      title: 'Delete subject?',
-      message: `Delete "${subject.name}" and all of its items? This cannot be undone.`,
-      confirmLabel: 'Delete',
+      title: t('checklist.deleteSubjectTitle'),
+      message: t('checklist.deleteSubjectMessage', { subject: subject.name }),
+      confirmLabel: t('common.delete'),
       destructive: true,
     });
     if (ok) {
@@ -333,9 +350,9 @@ function SubjectCard({
 
   const reset = async () => {
     const ok = await confirm({
-      title: 'Reset subject?',
-      message: `Reset all progress in "${subject.name}"?`,
-      confirmLabel: 'Reset',
+      title: t('checklist.resetSubjectTitle'),
+      message: t('checklist.resetSubjectMessage', { subject: subject.name }),
+      confirmLabel: t('common.reset'),
       destructive: true,
     });
     if (ok) {
@@ -358,13 +375,20 @@ function SubjectCard({
               ]}>
               {subject.name}
             </Text>
-            {isActive ? <Badge label="Active" tone="accent" /> : null}
-            {complete ? <Badge label="Complete" tone="good" /> : null}
+            {isActive ? (
+              <Badge label={t('checklist.active')} tone="accent" />
+            ) : null}
+            {complete ? (
+              <Badge label={t('checklist.complete')} tone="good" />
+            ) : null}
           </View>
           <Text style={[styles.subjectMeta, { color: colors.textMuted }]}>
             {subject.items.length === 0
-              ? 'No items yet'
-              : `${checked}/${subject.items.length} done`}
+              ? t('checklist.noItems')
+              : t('checklist.doneCount', {
+                  checked,
+                  total: subject.items.length,
+                })}
           </Text>
         </View>
       </View>
@@ -373,25 +397,29 @@ function SubjectCard({
         {!isActive && !complete ? (
           <SubjectAction
             disabled={pending}
-            label="Select"
+            label={t('checklist.select')}
             onPress={() => void run(() => api.selectSubject(subject.id))}
           />
         ) : null}
-        <SubjectAction disabled={pending} label="Rename" onPress={() => void rename()} />
+        <SubjectAction
+          disabled={pending}
+          label={t('checklist.rename')}
+          onPress={() => void rename()}
+        />
         <SubjectAction
           disabled={pending || checked === 0}
-          label="Undo"
+          label={t('checklist.undo')}
           onPress={() => void run(() => api.uncheckLast(subject.id))}
         />
         <SubjectAction
           disabled={pending || checked === 0}
-          label="Reset"
+          label={t('checklist.reset')}
           onPress={() => void reset()}
         />
         <SubjectAction
           danger
           disabled={pending}
-          label="Delete"
+          label={t('checklist.delete')}
           onPress={() => void remove()}
         />
         {pending ? <Spinner /> : null}
@@ -413,7 +441,7 @@ function SubjectCard({
         </View>
       ) : (
         <Text style={[styles.noItems, { color: colors.textMuted }]}>
-          Add the first item for this subject below.
+          {t('checklist.noItemsHint')}
         </Text>
       )}
 
@@ -455,6 +483,7 @@ function SubjectAction({
 
 function RestBanner({ summary, running }: { summary: ChecklistSummary; running: boolean }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const { pending, run } = useAction();
   return (
     <Card
@@ -464,11 +493,11 @@ function RestBanner({ summary, running }: { summary: ChecklistSummary; running: 
       ]}>
       <Text style={[styles.restMark, { color: colors.warn }]}>☕</Text>
       <View style={styles.restBody}>
-        <Text style={[styles.restTitle, { color: colors.warn }]}>Subject rest</Text>
+        <Text style={[styles.restTitle, { color: colors.warn }]}>
+          {t('checklist.restTitle')}
+        </Text>
         <Text style={[styles.restMessage, { color: colors.warn }]}>
-          {running
-            ? "Step away. The rest counts toward today's session."
-            : 'The rest is queued and will start when you resume.'}
+          {running ? t('checklist.restRunning') : t('checklist.restQueued')}
         </Text>
       </View>
       <View style={styles.restRight}>
@@ -477,7 +506,7 @@ function RestBanner({ summary, running }: { summary: ChecklistSummary; running: 
         </Text>
         <Button
           disabled={pending}
-          label="Skip rest"
+          label={t('checklist.skipRest')}
           onPress={() => void run(() => api.skipPhase())}
           size="sm"
           variant="secondary"
@@ -490,6 +519,7 @@ function RestBanner({ summary, running }: { summary: ChecklistSummary; running: 
 export function ChecklistScreen() {
   const { state, checklist } = useLive();
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const { pending, run } = useAction();
   const [name, setName] = useState('');
 
@@ -510,7 +540,7 @@ export function ChecklistScreen() {
         <Card style={styles.loadingCard}>
           <Spinner />
           <Text style={[styles.loadingText, { color: colors.textMuted }]}>
-            Loading checklist…
+            {t('checklist.loading')}
           </Text>
         </Card>
       </Screen>
@@ -522,8 +552,8 @@ export function ChecklistScreen() {
   return (
     <Screen>
       <PageHeader
-        title="Checklist"
-        subtitle="Only the first unchecked item of the active subject is running."
+        title={t('checklist.title')}
+        subtitle={t('checklist.subtitle')}
       />
 
       {summary.rest_remaining_seconds > 0 ? (
@@ -533,13 +563,13 @@ export function ChecklistScreen() {
       <Card style={styles.addSubjectCard}>
         <ThemedInput
           onChangeText={setName}
-          placeholder="Add a subject (e.g. Mathematics)…"
+          placeholder={t('checklist.addSubjectPlaceholder')}
           style={styles.subjectInput}
           value={name}
         />
         <Button
           disabled={!name.trim()}
-          label="Add subject"
+          label={t('checklist.addSubject')}
           left="+"
           onPress={() => void submitSubject()}
           pending={pending}
@@ -549,8 +579,8 @@ export function ChecklistScreen() {
       {checklist.subjects.length === 0 ? (
         <EmptyState
           mark="☑"
-          message="Add a subject, then add items. Each item gets its own countdown and carries any surplus or debt into the next item."
-          title="Start a checklist"
+          message={t('checklist.emptyMessage')}
+          title={t('checklist.emptyTitle')}
         />
       ) : (
         <View style={styles.subjectList}>
@@ -567,10 +597,12 @@ export function ChecklistScreen() {
 
       <Text style={[styles.footer, { color: colors.textFaint }]}>
         {checklist.subjects.length > 0
-          ? `${checklist.revision} checklist revision · ${formatWeekday(
-              state.snapshot.weekday,
-            )} · ${formatHours(state.snapshot.elapsed_seconds)} studied today`
-          : 'Carry belongs to one subject. Completing the last item discards it.'}
+          ? t('checklist.footer', {
+              revision: checklist.revision,
+              weekday: weekdayLabel(t, state.snapshot.weekday),
+              hours: formatHours(state.snapshot.elapsed_seconds),
+            })
+          : t('checklist.footerNoSubjects')}
       </Text>
     </Screen>
   );

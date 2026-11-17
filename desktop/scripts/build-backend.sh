@@ -32,6 +32,11 @@ rm -rf "$build_dir/backend" "$build_dir/pyinstaller" "$build_dir/spec"
   --paths "$root/backend" \
   --collect-submodules webstudy \
   --collect-submodules uvicorn \
+  --collect-submodules pypdf \
+  --collect-submodules pptx \
+  --collect-data pptx \
+  --collect-submodules python_multipart \
+  --collect-submodules multipart \
   --copy-metadata fastapi \
   --copy-metadata starlette \
   --copy-metadata uvicorn \

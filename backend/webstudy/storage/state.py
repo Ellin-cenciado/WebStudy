@@ -14,7 +14,7 @@ from ..core.pomodoro import Phase
 from ..core.tracker import TrackerState
 from .atomic import write_text_atomic
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def to_dict(state: TrackerState) -> dict:
@@ -29,10 +29,14 @@ def to_dict(state: TrackerState) -> dict:
         "phase_elapsed_seconds": state.phase_elapsed_seconds,
         "break_override_seconds": state.break_override_seconds,
         "running": state.running,
+        "last_reset_day": (
+            state.last_reset_day.isoformat() if state.last_reset_day else None
+        ),
     }
 
 
 def from_dict(data: dict) -> TrackerState:
+    raw_reset_day = data.get("last_reset_day")
     return TrackerState(
         logical_day=date.fromisoformat(data["logical_day"]),
         debt_seconds=int(data.get("debt_seconds", 0)),
@@ -43,6 +47,9 @@ def from_dict(data: dict) -> TrackerState:
         phase_elapsed_seconds=int(data.get("phase_elapsed_seconds", 0)),
         break_override_seconds=int(data.get("break_override_seconds", 0)),
         running=bool(data.get("running", False)),
+        last_reset_day=(
+            date.fromisoformat(raw_reset_day) if raw_reset_day else None
+        ),
     )
 
 

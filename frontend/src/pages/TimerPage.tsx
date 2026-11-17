@@ -15,8 +15,14 @@ import { cn } from "../lib/cn";
 import { formatClock, formatHours, formatTimestamp, titleCase } from "../lib/format";
 import { ProgressBar, Skeleton, Spinner } from "../components/ui";
 
-function phaseLabel(phase: string, freeDay: boolean, complete: boolean): string {
+function phaseLabel(
+  phase: string,
+  freeDay: boolean,
+  complete: boolean,
+  vacation = false,
+): string {
   if (complete) return "Day complete";
+  if (vacation) return "Vacation";
   if (freeDay) return "Free day";
   if (phase === "idle") return "Ready";
   return titleCase(phase);
@@ -29,6 +35,7 @@ export function TimerPage() {
   const snapshot = state?.snapshot;
   const complete = snapshot?.day_complete ?? false;
   const freeDay = snapshot?.is_free_day ?? false;
+  const vacation = snapshot?.is_vacation ?? false;
   const running = snapshot?.running ?? false;
   const canControl = connected && snapshot !== undefined && !complete && !freeDay;
 
@@ -84,13 +91,15 @@ export function TimerPage() {
 
   const primaryLabel = complete
     ? "Done"
-    : freeDay
-      ? "Free day"
-      : running
-        ? "Pause"
-        : snapshot.phase === "complete"
-          ? "Done"
-          : "Start";
+    : vacation
+      ? "Vacation"
+      : freeDay
+        ? "Free day"
+        : running
+          ? "Pause"
+          : snapshot.phase === "complete"
+            ? "Done"
+            : "Start";
 
   return (
     <div className="space-y-5">
@@ -102,11 +111,13 @@ export function TimerPage() {
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-50 sm:text-3xl">
             {complete
               ? "You did it."
-              : freeDay
-                ? "Take the day off."
-                : running
-                  ? "Stay with it."
-                  : "Ready when you are."}
+              : vacation
+                ? "Vacation mode."
+                : freeDay
+                  ? "Take the day off."
+                  : running
+                    ? "Stay with it."
+                    : "Ready when you are."}
           </h1>
         </div>
         <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
@@ -156,7 +167,7 @@ export function TimerPage() {
             ) : (
               <RotateCcw className="size-3.5" />
             )}
-            {phaseLabel(snapshot.phase, freeDay, complete)}
+            {phaseLabel(snapshot.phase, freeDay, complete, vacation)}
           </span>
 
           <div className="mt-5 min-h-[7rem] sm:min-h-[9rem]">
@@ -166,7 +177,13 @@ export function TimerPage() {
               </p>
             ) : (
               <p className="text-5xl font-black tracking-tight text-slate-900 dark:text-slate-50 sm:text-7xl">
-                {complete ? "Done" : freeDay ? "Rest" : "Ready"}
+                {complete
+                  ? "Done"
+                  : vacation
+                    ? "Off"
+                    : freeDay
+                      ? "Rest"
+                      : "Ready"}
               </p>
             )}
           </div>
@@ -279,11 +296,13 @@ export function TimerPage() {
           </p>
           <p className="mt-2 text-lg font-bold capitalize">{snapshot.day_kind}</p>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            {snapshot.is_free_day
-              ? "No requirement. Debt is preserved."
-              : snapshot.day_kind === "optional"
-                ? "Goal only. Unmet time is discarded."
-                : "Unmet time becomes tomorrow's debt."}
+            {vacation
+              ? "No requirement. Existing debt is preserved."
+              : snapshot.is_free_day
+                ? "No requirement. Debt is preserved."
+                : snapshot.day_kind === "optional"
+                  ? "Goal only. Unmet time is discarded."
+                  : "Unmet time becomes tomorrow's debt."}
           </p>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">

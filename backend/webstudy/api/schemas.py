@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..core.schedule import WEEKDAY_NAMES
 from ..storage.config import format_boundary, parse_boundary
@@ -30,6 +30,7 @@ class SnapshotResponse(BaseModel):
     running: bool
     day_complete: bool
     is_free_day: bool
+    is_vacation: bool
 
 
 class ChecklistSummaryResponse(BaseModel):
@@ -52,6 +53,7 @@ class EventResponse(BaseModel):
     summary: str
     body: str
     urgent: bool = False
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 class WeekdaySetting(BaseModel):
@@ -66,6 +68,19 @@ class WeekdaySetting(BaseModel):
         return value
 
 
+class VacationSettings(BaseModel):
+    enabled: bool = False
+    start: date | None = None
+    end: date | None = None
+
+    @model_validator(mode="after")
+    def chronological_range(self) -> "VacationSettings":
+        if self.start is not None and self.end is not None:
+            if self.start > self.end:
+                raise ValueError("vacation start must not be after end")
+        return self
+
+
 class ConfigResponse(BaseModel):
     boundary: str
     auto_start: bool
@@ -73,6 +88,9 @@ class ConfigResponse(BaseModel):
     break_minutes: int
     notifications: bool
     schedule: dict[str, WeekdaySetting]
+    vacation: VacationSettings
+    max_debt_hours: int
+    reset_cooldown_days: int
 
     @classmethod
     def from_config(cls, config) -> "ConfigResponse":
@@ -89,6 +107,13 @@ class ConfigResponse(BaseModel):
                 )
                 for index, name in enumerate(WEEKDAY_NAMES)
             },
+            vacation=VacationSettings(
+                enabled=config.vacation.enabled,
+                start=config.vacation.start,
+                end=config.vacation.end,
+            ),
+            max_debt_hours=config.max_debt_seconds // (60 * 60),
+            reset_cooldown_days=config.reset_cooldown_days,
         )
 
 
@@ -99,6 +124,9 @@ class ConfigUpdate(BaseModel):
     break_minutes: int = Field(default=10, ge=1, le=120)
     notifications: bool = True
     schedule: dict[str, WeekdaySetting]
+    vacation: VacationSettings = Field(default_factory=VacationSettings)
+    max_debt_hours: int = Field(default=12, ge=0, le=24 * 7)
+    reset_cooldown_days: int = Field(default=30, ge=1, le=365)
 
     @field_validator("boundary")
     @classmethod
@@ -116,6 +144,19 @@ class ConfigUpdate(BaseModel):
         if unknown:
             raise ValueError(f"unknown weekdays: {', '.join(unknown)}")
         return value
+
+
+class RecoveryResponse(BaseModel):
+    debt_seconds: int
+    cooldown_days: int
+    last_reset_on: date | None
+    next_reset_on: date | None
+    can_reset: bool
+
+
+class ResetDebtResponse(BaseModel):
+    forgiven_seconds: int
+    recovery: RecoveryResponse
 
 
 class DayRowResponse(BaseModel):

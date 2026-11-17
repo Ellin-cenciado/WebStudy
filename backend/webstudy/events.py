@@ -7,8 +7,8 @@ run on a headless machine without GTK/PyGObject installed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from dataclasses import dataclass, field
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -19,6 +19,8 @@ class Event:
     summary: str
     body: str
     urgent: bool = False
+    #: Structured values used by clients to localize the message.
+    params: dict[str, Any] = field(default_factory=dict)
 
 
 @runtime_checkable

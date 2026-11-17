@@ -8,8 +8,19 @@ import React, {
   useState,
   type ReactNode,
 } from 'react';
-import { AppState, type AppStateStatus } from 'react-native';
-import { api } from '../lib/api';
+import {
+  AppState,
+  PermissionsAndroid,
+  Platform,
+  type AppStateStatus,
+} from 'react-native';
+import { api, backgroundTimer } from '../lib/api';
+import {
+  awayDelta,
+  markerDelta,
+  toAwaySnapshot,
+  type AwaySnapshot,
+} from '../lib/away';
 import { errorMessage } from '../lib/format';
 import type {
   ChecklistData,
@@ -17,15 +28,22 @@ import type {
   StateEnvelope,
 } from '../lib/types';
 import { useConfig } from './ConfigContext';
+import { useLanguage } from './LanguageContext';
 import { useToast } from './ToastContext';
+
+export type NotificationPermission = 'granted' | 'denied' | 'unknown';
 
 interface LiveContextValue {
   state: StateEnvelope | null;
   checklist: ChecklistData | null;
   connected: boolean;
   error: string | null;
+  awaySeconds: number | null;
+  notificationPermission: NotificationPermission;
   applyPayload: (payload: PollPayload) => void;
   refresh: () => Promise<void>;
+  dismissAway: () => void;
+  requestNotificationPermission: () => Promise<boolean>;
 }
 
 const LiveContext = createContext<LiveContextValue | null>(null);
@@ -37,16 +55,139 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const [checklist, setChecklist] = useState<ChecklistData | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [awaySeconds, setAwaySeconds] = useState<number | null>(null);
+  const [notificationPermission, setNotificationPermission] =
+    useState<NotificationPermission>('unknown');
   const { config } = useConfig();
   const { push } = useToast();
+  const { t } = useLanguage();
   const notificationsEnabled = useRef(config?.notifications ?? true);
+  const stateRef = useRef<StateEnvelope | null>(null);
+  const serviceWanted = useRef(false);
+  const permissionRequested = useRef(false);
+  const startupAwayChecked = useRef(false);
+  const backgroundRef = useRef<AwaySnapshot | null>(null);
 
   useEffect(() => {
     notificationsEnabled.current = config?.notifications ?? true;
   }, [config?.notifications]);
 
+  useEffect(() => {
+    if (Platform.OS !== 'android' || Number(Platform.Version) < 33) {
+      setNotificationPermission('granted');
+      return;
+    }
+    PermissionsAndroid.check(
+      PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+    )
+      .then(granted => {
+        setNotificationPermission(granted ? 'granted' : 'unknown');
+      })
+      .catch(() => {
+        setNotificationPermission('unknown');
+      });
+  }, []);
+
+  const requestNotificationPermission = useCallback(async () => {
+    permissionRequested.current = true;
+    if (Platform.OS !== 'android' || Number(Platform.Version) < 33) {
+      setNotificationPermission('granted');
+      return true;
+    }
+    try {
+      const result = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+      );
+      const granted = result === PermissionsAndroid.RESULTS.GRANTED;
+      setNotificationPermission(granted ? 'granted' : 'denied');
+      return granted;
+    } catch {
+      setNotificationPermission('denied');
+      return false;
+    }
+  }, []);
+
+  const dismissAway = useCallback(() => {
+    setAwaySeconds(null);
+  }, []);
+
+  const timerRunning = state?.snapshot.running ?? false;
+  const timerBlocked =
+    (state?.snapshot.day_complete ?? false) ||
+    (state?.snapshot.is_free_day ?? false);
+
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      void backgroundTimer.setForeground(true).catch(() => {});
+    }
+  }, []);
+
+  // A marker survives when Android destroys the UI (for example, when the app
+  // is swiped out of Recents) but keeps the timer service alive.
+  useEffect(() => {
+    if (Platform.OS !== 'android' || state === null) {
+      return;
+    }
+    if (startupAwayChecked.current) {
+      return;
+    }
+    startupAwayChecked.current = true;
+    void (async () => {
+      try {
+        const marker = await backgroundTimer.takeAway();
+        if (marker === null) {
+          return;
+        }
+        const current = stateRef.current?.snapshot;
+        if (current === undefined) {
+          return;
+        }
+        const delta = markerDelta(marker, toAwaySnapshot(current));
+        if (delta !== null) {
+          setAwaySeconds(delta);
+        }
+      } catch {
+        // Without a readable marker there is no away summary to show.
+      }
+    })();
+  }, [state]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') {
+      return;
+    }
+    const wanted = timerRunning && !timerBlocked;
+    if (wanted === serviceWanted.current) {
+      return;
+    }
+    serviceWanted.current = wanted;
+    if (wanted) {
+      void backgroundTimer.start().catch(() => {
+        // The in-process timer still runs; the notification is unavailable.
+      });
+    } else {
+      void backgroundTimer.stop().catch(() => {
+        // Stopping an absent service is harmless.
+      });
+    }
+  }, [timerRunning, timerBlocked]);
+
+  useEffect(() => {
+    if (
+      Platform.OS !== 'android' ||
+      Number(Platform.Version) < 33 ||
+      !timerRunning ||
+      notificationPermission !== 'unknown' ||
+      permissionRequested.current
+    ) {
+      return;
+    }
+    void requestNotificationPermission();
+  }, [timerRunning, notificationPermission, requestNotificationPermission]);
+
   const applyPayload = useCallback(
     (payload: PollPayload) => {
+      stateRef.current = payload.state;
       setState(payload.state);
       setChecklist(payload.checklist);
       setConnected(true);
@@ -77,6 +218,47 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastAppState: AppStateStatus = (AppState.currentState ??
+      'active') as AppStateStatus;
+
+    const leaveForeground = () => {
+      void backgroundTimer.setForeground(false).catch(() => {});
+      const snapshot = stateRef.current?.snapshot;
+      const away = snapshot ? toAwaySnapshot(snapshot) : null;
+      backgroundRef.current = away;
+      if (away !== null) {
+        void backgroundTimer.recordAway(away).catch(() => {
+          // The in-memory snapshot still covers a normal return.
+        });
+      }
+      void api.persist().catch(() => {
+        // The timer service will persist on its next tick.
+      });
+    };
+
+    const returnToForeground = async () => {
+      void backgroundTimer.setForeground(true).catch(() => {});
+      void backgroundTimer.clearAway().catch(() => {});
+      await refresh();
+      const before = backgroundRef.current;
+      backgroundRef.current = null;
+      const after = stateRef.current?.snapshot;
+      if (before === null || after === undefined) {
+        return;
+      }
+      if (after.logical_day !== before.logicalDay) {
+        push({
+          kind: 'info',
+          title: t('live.newDayTitle'),
+          body: t('live.newDayBody'),
+        });
+        return;
+      }
+      const delta = awayDelta(before, toAwaySnapshot(after));
+      if (delta !== null) {
+        setAwaySeconds(delta);
+      }
+    };
 
     const loop = async () => {
       if (stopped) {
@@ -95,13 +277,12 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     const subscription = AppState.addEventListener(
       'change',
       (next: AppStateStatus) => {
-        if (next === 'active') {
-          void refresh();
-        } else if (next === 'background') {
-          void api.persist().catch(() => {
-            // Persistence also happens periodically while polling.
-          });
+        if (next === 'background' && lastAppState !== 'background') {
+          leaveForeground();
+        } else if (next === 'active' && lastAppState !== 'active') {
+          void returnToForeground();
         }
+        lastAppState = next;
       },
     );
 
@@ -112,11 +293,33 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       }
       subscription.remove();
     };
-  }, [refresh]);
+  }, [refresh, push, t]);
 
   const value = useMemo(
-    () => ({ state, checklist, connected, error, applyPayload, refresh }),
-    [state, checklist, connected, error, applyPayload, refresh],
+    () => ({
+      state,
+      checklist,
+      connected,
+      error,
+      awaySeconds,
+      notificationPermission,
+      applyPayload,
+      refresh,
+      dismissAway,
+      requestNotificationPermission,
+    }),
+    [
+      state,
+      checklist,
+      connected,
+      error,
+      awaySeconds,
+      notificationPermission,
+      applyPayload,
+      refresh,
+      dismissAway,
+      requestNotificationPermission,
+    ],
   );
 
   return <LiveContext.Provider value={value}>{children}</LiveContext.Provider>;

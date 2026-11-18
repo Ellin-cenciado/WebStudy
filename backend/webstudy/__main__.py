@@ -51,6 +51,10 @@ def _start_parent_watchdog() -> None:
 def main(argv: list[str] | None = None) -> int:
     import uvicorn
 
+    from .env import load_env_file
+
+    load_env_file()
+
     parser = argparse.ArgumentParser(
         prog="webstudy", description="Run the WebStudy web backend"
     )

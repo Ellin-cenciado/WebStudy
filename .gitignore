@@ -16,3 +16,8 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
+
+# Local secrets / configuration
+.env
+*.env
+!*.env.example

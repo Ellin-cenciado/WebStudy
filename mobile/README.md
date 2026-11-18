@@ -11,17 +11,38 @@ desktop apps use. The Study Prep screen is the one exception: it talks to a
 WebStudy backend over HTTP for source extraction and note generation, then uses
 the bridge to import the generated plan into the local checklist.
 
+## Fast path
+
+From the repository root:
+
+```bash
+./scripts/setup-mobile.sh --install
+./scripts/start.sh --lan
+```
+
+The first command checks the Android toolchain, installs mobile dependencies,
+builds the release APK, and installs it on a connected `adb` device. It
+auto-detects a Python 3.14 build interpreter (see [Setup](#setup)). Omit
+`--install` to only build; the APK is also copied to
+`mobile/release/WebStudy-0.1.0.apk`. The second command starts the backend with
+LAN access so Study Prep can reach it.
+
+Then open **Preparación → Servidor** (**Prep → Server** in English) in the app
+and enter the URL printed by `start.sh`. See the
+[root README](../README.md) for the full setup and AI configuration.
+
 ## Requirements
 
-- Node.js 22.12+ and npm
+- Node.js 22.11+ and npm (22.12+ recommended)
 - JDK 21
 - Android SDK with:
   - Platform 36 (`platforms;android-36`)
   - Build Tools 36.0.0
   - NDK 27.1.12297006
   - CMake 3.22.1
-- The repository Python virtual environment at `.venv`, or another Python
-  3.14 installation selected with `WEBSTUDY_PYTHON`
+- Python 3.14 for Chaquopy; `setup-mobile.sh` auto-detects it in `.venv` or on
+  `PATH`, and `WEBSTUDY_PYTHON` overrides the choice
+- `adb` for installing the APK
 
 This project targets `minSdk 24`, `compileSdk 36`, and `targetSdk 36`. Only the
 `arm64-v8a` (devices) and `x86_64` (emulators) ABIs are built because Chaquopy
@@ -29,29 +50,51 @@ This project targets `minSdk 24`, `compileSdk 36`, and `targetSdk 36`. Only the
 
 ## Setup
 
+The helper script is the easiest path:
+
+```bash
+cd /home/lin/Projects/WebStudy
+./scripts/setup-mobile.sh
+```
+
+It uses the repository `.venv` when that is Python 3.14; otherwise it looks for
+`python3.14` on `PATH`. Set `WEBSTUDY_PYTHON` to a 3.14 interpreter to override
+the choice. The backend `.venv` can stay on Python 3.11-3.13.
+
+To set up the backend and mobile dependencies manually:
+
 ```bash
 cd /home/lin/Projects/WebStudy
 
-python3 -m venv .venv
+python3 -m venv .venv          # 3.14 optional; setup-mobile.sh can use python3.14
 .venv/bin/pip install -e './backend[dev]'
 
 cd mobile
 npm install
 ```
 
-Chaquopy uses `.venv/bin/python` by default. Override it when the venv lives
-elsewhere:
+If `.venv` is not 3.14, a manual Android build needs a 3.14 interpreter through
+`WEBSTUDY_PYTHON` (below).
+
+Gradle uses `.venv/bin/python` by default. Override it when the 3.14 interpreter
+lives elsewhere:
 
 ```bash
 cd mobile/android
 WEBSTUDY_PYTHON=/path/to/python3.14 ./gradlew :app:assembleRelease
 ```
 
+`setup-mobile.sh` exports its detected interpreter as `WEBSTUDY_PYTHON`; a
+manual Gradle build uses `.venv` unless you set it yourself.
+
 The Android SDK location is read from `android/local.properties`:
 
 ```properties
 sdk.dir=/home/lin/Android/Sdk
 ```
+
+`setup-mobile.sh` writes this file when it finds the SDK through
+`ANDROID_HOME`/`ANDROID_SDK_ROOT` and the file is missing.
 
 ## Build and run
 
@@ -76,14 +119,20 @@ cd mobile/android
 
 The standalone APK is written to
 `android/app/build/outputs/apk/release/app-release.apk`. JavaScript and the
-Python engine are both bundled, so no Metro server is needed. Local validated
-builds are also copied to `mobile/release/` (`WebStudy-0.1.0.apk` for the
-current version); that directory is gitignored.
+Python engine are both bundled, so no Metro server is needed. When the build is
+run through `../scripts/setup-mobile.sh`, a copy is also placed at
+`mobile/release/WebStudy-0.1.0.apk`; that directory is gitignored. A manual
+Gradle build only writes the build output directory.
+
+From the repository root:
 
 ```bash
-adb install -r android/app/build/outputs/apk/release/app-release.apk
+adb install -r mobile/android/app/build/outputs/apk/release/app-release.apk
 adb shell am start -n com.webstudy.mobile/.MainActivity
 ```
+
+If you built through `../scripts/setup-mobile.sh`, the copy at
+`mobile/release/WebStudy-0.1.0.apk` is equivalent.
 
 The release build is currently signed with the React Native debug keystore so
 it can be installed locally. Replace `signingConfigs` in
@@ -149,6 +198,61 @@ Pause/Skip actions, and the alert notifications emitted by the embedded engine.
 Study Prep's generated output has its own **Language** selector and remains
 independent (default: **Auto**, matching the source material).
 
+## AI configuration is server-side
+
+Study Prep AI is configured on the computer that runs the WebStudy backend, not
+on the phone. The backend reads the shared
+`~/.config/simplestudy/webstudy.env` file (mode `600`; override with
+`WEBSTUDY_ENV_FILE`). Run `../scripts/setup-ai.sh` once on that computer, then
+restart the backend. See [AI setup (Study Prep)](../README.md#ai-setup-study-prep)
+for provider details, model limits, and OpenCode.
+
+This env file is only needed for Study Prep. The embedded timer, checklist,
+history, stats, vacation settings, and the language choice work offline and do
+not use it. The app stores no API key or model configuration of its own.
+
+## Study Prep
+
+The **Prep** tab (**Preparación** in Spanish) generates polished notes and a
+study plan from rough notes and text-based PDF, PPTX, or Markdown sources.
+Extraction, model calls, and source storage run on the WebStudy backend, not on
+the phone, so the server must be running and reachable over the same network.
+
+From the repository root, configure a provider once and start with LAN access:
+
+```bash
+./scripts/setup-ai.sh
+./scripts/start.sh --lan
+```
+
+Use `--host 0.0.0.0` if starting the backend manually. The model is configured
+in the shared env file described above; no model settings are written to the
+app. The backend stores runs under `state_dir()/study-prep/<run_id>/`, including
+the raw uploads, extracted text, `notes.md`, `plan.json`, and `run.json`.
+
+To use an OpenCode agent instead, choose OpenCode in `setup-ai.sh`. The backend
+talks to the OpenCode V2 service; the phone still connects only to
+`http://<computer>:8000`, and the OpenCode password stays on the backend host.
+See [AI setup (Study Prep)](../README.md#ai-setup-study-prep) for the OpenCode
+and remote-service details.
+
+In the phone's Prep tab, enter the computer's LAN address (for example
+`http://192.168.0.20:8000`) and tap **Connect** (**Conectar**). The address is
+kept in Android `SharedPreferences` under `studyPrepServer`. Cleartext HTTP is
+enabled for the release manifest so the app can reach a LAN backend; use HTTPS
+or a trusted network if the traffic must be protected.
+
+The app polls the run until it is ready, then shows the Markdown notes and the
+plan. **Import plan to checklist** maps each plan subject to a local checklist
+subject and adds its items through the Python bridge. The import is atomic and
+does not replace existing subjects. Imported run IDs are remembered in
+`SharedPreferences` under `studyPrepImportedRuns`, so the app can label a plan
+as already imported. Cancelling, retrying, and deleting a run only affect the
+server; the local checklist is unchanged.
+
+Sources must contain selectable text: scanned PDFs and image-only slides are
+not supported because the pipeline has no OCR. DOCX is not accepted.
+
 ## Architecture
 
 ```text
@@ -207,62 +311,6 @@ The theme preference is stored separately in Android `SharedPreferences` under
 the key `theme` (`system`, `light`, or `dark`); the engine's config remains the
 authority for study settings.
 
-## Study Prep
-
-The **Prep** tab generates polished notes and a study plan from rough notes and
-text-based PDF, PPTX, or Markdown sources. Extraction, model calls, and source
-storage run on the WebStudy backend, not on the phone, so the server must be
-running and reachable over the same network.
-
-Start the backend on the computer that runs Ollama (or another
-OpenAI-compatible provider), bound to all interfaces:
-
-```bash
-export WEBSTUDY_LLM_MODEL=qwen3.8:27b
-export WEBSTUDY_LLM_BASE_URL=http://127.0.0.1:11434/v1
-export WEBSTUDY_LLM_REASONING_EFFORT=none
-export WEBSTUDY_LLM_CONTEXT_TOKENS=4096
-export WEBSTUDY_LLM_MAX_OUTPUT_TOKENS=1500
-.venv/bin/webstudy --host 0.0.0.0
-```
-
-Use `--host 0.0.0.0` so the phone can connect. The model is configured with the
-`WEBSTUDY_LLM_*` environment variables described in the main README; no model
-settings are written to the app. The backend stores runs under
-`state_dir()/study-prep/<run_id>/`, including the raw uploads, extracted text,
-`notes.md`, `plan.json`, and `run.json`.
-
-To use an OpenCode agent instead, start OpenCode on the backend host and select
-it in the backend environment:
-
-```bash
-opencode service start
-export WEBSTUDY_LLM_PROVIDER=opencode
-export WEBSTUDY_OPENCODE_AGENT=study-prep
-export WEBSTUDY_OPENCODE_MODEL=opencode-go/deepseek-v4.1-flash
-.venv/bin/webstudy --host 0.0.0.0
-```
-
-The phone still connects only to `http://<computer>:8000`. It never contacts the
-OpenCode service, and the OpenCode password stays on the backend host.
-
-In the phone's Prep tab, enter the computer's LAN address (for example
-`http://192.168.0.20:8000`) and tap **Connect**. The address is kept in Android
-`SharedPreferences` under `studyPrepServer`. Cleartext HTTP is enabled for the
-release manifest so the app can reach a LAN backend; use HTTPS or a trusted
-network if the traffic must be protected.
-
-The app polls the run until it is ready, then shows the Markdown notes and the
-plan. **Import plan to checklist** maps each plan subject to a local checklist
-subject and adds its items through the Python bridge. The import is atomic and
-does not replace existing subjects. Imported run IDs are remembered in
-`SharedPreferences` under `studyPrepImportedRuns`, so the app can label a plan
-as already imported. Cancelling, retrying, and deleting a run only affect the
-server; the local checklist is unchanged.
-
-Sources must contain selectable text: scanned PDFs and image-only slides are
-not supported because the pipeline has no OCR. DOCX is not accepted.
-
 ## Development checks
 
 ```bash
@@ -276,6 +324,9 @@ The bridge can be exercised against the host Python environment without Android
 by importing `webstudy_bridge` with `PYTHONPATH=backend`, then calling
 `init("/tmp/webstudy-mobile")` and `dispatch("poll")`.
 
+`mobile/.eslintignore` keeps `node_modules`, coverage, Android build outputs,
+and iOS Pods out of lint.
+
 ## Current limitations
 
 - The background timer requires Android notification permission on Android 13+.
@@ -288,8 +339,9 @@ by importing `webstudy_bridge` with `PYTHONPATH=backend`, then calling
   optimization for WebStudy if that happens; the app does not request the
   exemption automatically.
 - Desktop-only settings (transparency, XDG paths) are not exposed on Android.
-- Study Prep needs the WebStudy backend and an Ollama or OpenAI-compatible
-  provider reachable over the LAN; the phone cannot generate notes offline.
+- Study Prep needs the WebStudy backend plus an Ollama or OpenAI-compatible
+  server (including LM Studio), or OpenCode, reachable over the LAN; the phone
+  cannot generate notes offline.
 - Study Prep accepts only text-based PDF, PPTX, and Markdown. Scanned PDFs and
   image-only slides are rejected because there is no OCR, and DOCX is not
   supported.

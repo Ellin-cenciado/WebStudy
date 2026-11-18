@@ -8,6 +8,7 @@ Type=simple
 WorkingDirectory=%h/Projects/WebStudy
 Environment=WEBSTUDY_HOST=127.0.0.1
 Environment=WEBSTUDY_PORT=8000
+EnvironmentFile=-%h/.config/simplestudy/webstudy.env
 ExecStart=%h/Projects/WebStudy/.venv/bin/webstudy
 Restart=on-failure
 RestartSec=2
